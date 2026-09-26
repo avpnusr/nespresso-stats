@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+
+data/*.db
+*.db-journal
+*.sqlite3
+
+.env
+.DS_Store
+
+AGENTS.md

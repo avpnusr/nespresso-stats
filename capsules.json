@@ -1,0 +1,331 @@
+[
+  {
+    "name": "Melozio",
+    "family": "Mug",
+    "color": "#a16730",
+    "image": "/static/capsules/melozio.png",
+    "intensity": 6
+  },
+  {
+    "name": "Intenso",
+    "family": "Mug",
+    "color": "#573525",
+    "image": "/static/capsules/intenso.png",
+    "intensity": 9
+  },
+  {
+    "name": "Mexico",
+    "family": "Mug",
+    "color": "#759808",
+    "image": "/static/capsules/mexico.png",
+    "intensity": 7
+  },
+  {
+    "name": "Stormio",
+    "family": "Mug",
+    "color": "#446323",
+    "image": "/static/capsules/stormio.png",
+    "intensity": 8
+  },
+  {
+    "name": "Maple Pecan",
+    "family": "Mug",
+    "color": "#dd976f",
+    "image": "/static/capsules/maple-pecan.png",
+    "intensity": 0
+  },
+  {
+    "name": "Cinnamon Apple Crisp",
+    "family": "Mug",
+    "color": "#da6348",
+    "image": "/static/capsules/cinnamon-apple-crisp.png",
+    "intensity": 0
+  },
+  {
+    "name": "Pumpkin Spice Cake",
+    "family": "Mug",
+    "color": "#a75933",
+    "image": "/static/capsules/pumpkin-spice-cake.png",
+    "intensity": 0
+  },
+  {
+    "name": "Fortado",
+    "family": "Gran Lungo",
+    "color": "#75746f",
+    "image": "/static/capsules/fortado.png",
+    "intensity": 8
+  },
+  {
+    "name": "Active",
+    "family": "Double Espresso",
+    "color": "#f0b94c",
+    "image": "/static/capsules/active.png",
+    "intensity": 0
+  },
+  {
+    "name": "Bianco Doppio",
+    "family": "Double Espresso",
+    "color": "#c69660",
+    "image": "/static/capsules/bianco-doppio.png",
+    "intensity": 0
+  },
+  {
+    "name": "Double Espresso Chiaro",
+    "family": "Double Espresso",
+    "color": "#503e2f",
+    "image": "/static/capsules/double-espresso-chiaro.png",
+    "intensity": 8
+  },
+  {
+    "name": "Double Espresso Chiaro Decaffeinato",
+    "family": "Double Espresso",
+    "color": "#6a4530",
+    "image": "/static/capsules/double-espresso-chiaro-decaffeinato.png",
+    "intensity": 8
+  },
+  {
+    "name": "Double Espresso Dolce",
+    "family": "Double Espresso",
+    "color": "#9b683a",
+    "image": "/static/capsules/double-espresso-dolce.png",
+    "intensity": 5
+  },
+  {
+    "name": "Double Espresso Scuro",
+    "family": "Double Espresso",
+    "color": "#423732",
+    "image": "/static/capsules/double-espresso-scuro.png",
+    "intensity": 11
+  },
+  {
+    "name": "Ginseng Delight",
+    "family": "Double Espresso",
+    "color": "#e17e79",
+    "image": "/static/capsules/ginseng-delight.png",
+    "intensity": 0
+  },
+  {
+    "name": "Yuzu Vanilla Over Ice",
+    "family": "Double Espresso",
+    "color": "#e2dcaf",
+    "image": "/static/capsules/yuzu-vanilla-over-ice.png",
+    "intensity": 0
+  },
+  {
+    "name": "Altissio",
+    "family": "Espresso",
+    "color": "#694487",
+    "image": "/static/capsules/altissio.png",
+    "intensity": 9
+  },
+  {
+    "name": "Altissio Decaffeinato",
+    "family": "Espresso",
+    "color": "#6a477b",
+    "image": "/static/capsules/altissio-decaffeinato.png",
+    "intensity": 9
+  },
+  {
+    "name": "Diavolitto",
+    "family": "Espresso",
+    "color": "#36466c",
+    "image": "/static/capsules/diavolitto.png",
+    "intensity": 11
+  },
+  {
+    "name": "Il Caffè",
+    "family": "Espresso",
+    "color": "#535b46",
+    "image": "/static/capsules/il-caffe.png",
+    "intensity": 11
+  },
+  {
+    "name": "Orafio",
+    "family": "Espresso",
+    "color": "#c87d35",
+    "image": "/static/capsules/orafio.png",
+    "intensity": 6
+  },
+  {
+    "name": "Peru Organic",
+    "family": "Espresso",
+    "color": "#89a044",
+    "image": "/static/capsules/peru-organic.png",
+    "intensity": 6
+  },
+  {
+    "name": "Voltesso",
+    "family": "Espresso",
+    "color": "#ce933f",
+    "image": "/static/capsules/voltesso.png",
+    "intensity": 4
+  },
+  {
+    "name": "Arondio",
+    "family": "Gran Lungo",
+    "color": "#a8968d",
+    "image": "/static/capsules/arondio.png",
+    "intensity": 6
+  },
+  {
+    "name": "Costa Rica",
+    "family": "Gran Lungo",
+    "color": "#1d8ca6",
+    "image": "/static/capsules/costa-rica.png",
+    "intensity": 7
+  },
+  {
+    "name": "Ethiopia",
+    "family": "Gran Lungo",
+    "color": "#a56958",
+    "image": "/static/capsules/ethiopia.png",
+    "intensity": 4
+  },
+  {
+    "name": "Fortado Decaffeinato",
+    "family": "Gran Lungo",
+    "color": "#7f6e68",
+    "image": "/static/capsules/fortado-decaffeinato.png",
+    "intensity": 8
+  },
+  {
+    "name": "Inizio",
+    "family": "Gran Lungo",
+    "color": "#ea9040",
+    "image": "/static/capsules/inizio.png",
+    "intensity": 4
+  },
+  {
+    "name": "Bianco Forte",
+    "family": "Mug",
+    "color": "#965c29",
+    "image": "/static/capsules/bianco-forte.png",
+    "intensity": 0
+  },
+  {
+    "name": "Coconut Vanilla Flavour",
+    "family": "Mug",
+    "color": "#e9e0c7",
+    "image": "/static/capsules/coconut-vanilla-flavour.png",
+    "intensity": 0
+  },
+  {
+    "name": "Colombia",
+    "family": "Mug",
+    "color": "#8d5466",
+    "image": "/static/capsules/colombia.png",
+    "intensity": 5
+  },
+  {
+    "name": "El Salvador",
+    "family": "Mug",
+    "color": "#aa4247",
+    "image": "/static/capsules/el-salvador.png",
+    "intensity": 5
+  },
+  {
+    "name": "Golden Caramel",
+    "family": "Mug",
+    "color": "#cd9960",
+    "image": "/static/capsules/golden-caramel.png",
+    "intensity": 0
+  },
+  {
+    "name": "Half Caffeinato",
+    "family": "Mug",
+    "color": "#551e20",
+    "image": "/static/capsules/half-caffeinato.png",
+    "intensity": 5
+  },
+  {
+    "name": "Kahawa Ya Congo",
+    "family": "Mug",
+    "color": "#3e3a38",
+    "image": "/static/capsules/kahawa-ya-congo.png",
+    "intensity": 6
+  },
+  {
+    "name": "Melozio Decaffeinato",
+    "family": "Mug",
+    "color": "#cb9062",
+    "image": "/static/capsules/melozio-decaffeinato.png",
+    "intensity": 6
+  },
+  {
+    "name": "Melozio Go",
+    "family": "Mug",
+    "color": "#b49065",
+    "image": "/static/capsules/melozio-go.png",
+    "intensity": 6
+  },
+  {
+    "name": "Odacio",
+    "family": "Mug",
+    "color": "#13607c",
+    "image": "/static/capsules/odacio.png",
+    "intensity": 7
+  },
+  {
+    "name": "Rich Chocolate",
+    "family": "Mug",
+    "color": "#715043",
+    "image": "/static/capsules/rich-chocolate.png",
+    "intensity": 0
+  },
+  {
+    "name": "Roasted Hazelnut",
+    "family": "Mug",
+    "color": "#9f5546",
+    "image": "/static/capsules/roasted-hazelnut.png",
+    "intensity": 0
+  },
+  {
+    "name": "Solelio",
+    "family": "Mug",
+    "color": "#e8b620",
+    "image": "/static/capsules/solelio.png",
+    "intensity": 2
+  },
+  {
+    "name": "Stormio Go",
+    "family": "Mug",
+    "color": "#47583c",
+    "image": "/static/capsules/stormio-go.png",
+    "intensity": 8
+  },
+  {
+    "name": "Sweet Vanilla",
+    "family": "Mug",
+    "color": "#baaa8a",
+    "image": "/static/capsules/sweet-vanilla.png",
+    "intensity": 0
+  },
+  {
+    "name": "Sweet Vanilla Decaffeinato",
+    "family": "Mug",
+    "color": "#c2a785",
+    "image": "/static/capsules/sweet-vanilla-decaffeinato.png",
+    "intensity": 0
+  },
+  {
+    "name": "Vivida",
+    "family": "Mug",
+    "color": "#bd968e",
+    "image": "/static/capsules/vivida.png",
+    "intensity": 6
+  },
+  {
+    "name": "Carafe Pour-Over Style",
+    "family": "Carafe",
+    "color": "#bf8f8d",
+    "image": "/static/capsules/carafe-pour-over-style.png",
+    "intensity": 0
+  },
+  {
+    "name": "Togetherness Blend",
+    "family": "Double Espresso",
+    "color": "#39413d",
+    "image": "/static/capsules/togetherness-blend.png",
+    "intensity": 7
+  }
+]
