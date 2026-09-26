@@ -29,6 +29,13 @@ catalogue from `capsules.json`; edit or delete those rows freely.
 docker compose up -d --build   # → http://<host>:8787
 ```
 
+Or pull the image CI publishes on every push (only a `:latest` tag exists):
+
+```bash
+docker run -d --name nespresso-stats -p 8787:8787 \
+  -v "$PWD/data:/data" ghcr.io/avpnusr/nespresso-stats:latest
+```
+
 The vision backend is configurable from the shell or a `.env` file beside the
 compose file: `VISION_BASE_URL` (default `http://127.0.0.1:11434/v1`), `VISION_MODEL`
 (default `qwen3.5:4b`) and `VISION_API_KEY` (default `ollama`, ignored by a local
