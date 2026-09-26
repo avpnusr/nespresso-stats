@@ -1,5 +1,11 @@
 # Nespresso Stats
 
+> **Disclaimer:** this repository is written and maintained with AI coding
+> agents. Every change is reviewed by the maintainer before it lands, but expect
+> AI-generated code and docs — check anything critical yourself. All images in
+> the repo (capsule photos, artwork, favicons and the machine render) are
+> AI-generated too; they are not official Nespresso assets.
+
 A self-hosted dashboard for your Nespresso Vertuo capsule inventory: what
 you have, how many of each, brew history, and optional auto-decrement when
 the machine brews a coffee.
@@ -42,7 +48,7 @@ Set them to match your host; `./data` is chowned to match on start.
 ![The Nespresso Stats dashboard: capsule tiles with counts, prices and an intensity
 scale, plus the coffee stats and recent activity lists](screenshot.png)
 
-- Capsule cards grouped by family, each with the capsule's official photo
+- Capsule cards grouped by family, each with the capsule's photo
   (or your own photo URL; falls back to a drawn SVG if none), count,
   `+` / `−` buttons; drag a tile to reorder them.
 - `+` / `−` adjust stock; **Brew** lowers stock by 1 and logs a brew.
@@ -88,11 +94,11 @@ work the same way. A top-down photo of the bare dome has no text — there the
 result is a colour shortlist only.
 
 Colour ranking is only as good as the stored colours, so the seed colours in
-`capsules.json` were extracted from official capsule photos, not guessed.
+`capsules.json` were sampled from the capsule photos, not guessed.
 
 ### Benchmarked on real capsule photos
 
-24 official capsule photos, exact-name accuracy:
+24 AI-generated capsule photos, exact-name accuracy:
 
 | Approach | Correct |
 | --- | --- |
@@ -258,4 +264,4 @@ and reads its `language` field — drop the file in and it appears.
 - `static/i18n/*.json` — UI translations (one file per language, self-labelled).
 - `screenshot.png` — the dashboard picture above.
 - `capsules.json` — starter catalogue of the capsules you own (name, family,
-  colour, intensity, and an official photo under `static/capsules/`).
+  colour, intensity, and a photo under `static/capsules/`).
