@@ -26,10 +26,13 @@ catalogue from `capsules.json`; edit or delete those rows freely.
 ### Docker
 
 ```bash
-docker compose up -d --build   # → http://<host>:8787
+docker compose up -d   # pulls ghcr.io/avpnusr/nespresso-stats:latest → http://<host>:8787
 ```
 
-Or pull the image CI publishes on every push (only a `:latest` tag exists):
+CI publishes a `:latest` image on every push, so `docker compose pull` picks up
+new versions (the tag is the only one, so a pull can also change what you run).
+
+Or without compose:
 
 ```bash
 docker run -d --name nespresso-stats -p 8787:8787 \

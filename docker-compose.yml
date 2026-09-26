@@ -1,6 +1,6 @@
 services:
   nespresso-stats:
-    build: .
+    image: ghcr.io/avpnusr/nespresso-stats:latest
     ports:
       - "8787:8787"
     environment:
