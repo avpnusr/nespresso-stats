@@ -230,9 +230,12 @@ async function api(path, method = "GET", body) {
   return res.json();
 }
 
+// A capsule colour reaches a JS string and an SVG attribute, so only a real hex value
+// may pass — anything else (a crafted API payload) must not reach the DOM as markup.
+const safeColor = (c) => (/^#[0-9a-fA-F]{3,8}$/.test(c ?? "") ? c : "#6b4f3a");
 const capsuleArt = (c) => {
-  if (c.image) return `<img src="${esc(c.image)}" alt="" onerror="this.outerHTML=capsuleSVG('${c.color}')">`;
-  return capsuleSVG(c.color);
+  if (c.image) return `<img src="${esc(c.image)}" alt="" onerror="this.outerHTML=capsuleSVG('${safeColor(c.color)}')">`;
+  return capsuleSVG(safeColor(c.color));
 };
 const intensityBar = (c) => c.intensity
   ? `<span class="intensity" title="${esc(t("card.intensityTitle", { n: c.intensity }))}"><span class="scale">${Array.from({ length: 13 }, (_, i) => `<i class="${i < c.intensity ? "on" : ""}"></i>`).join("")}</span><b>${c.intensity}</b></span>`
@@ -659,7 +662,7 @@ function renderIdentify(res) {
     ? `<button onclick="addKnown(${knownIdx})">${esc(t("btn.add"))}</button>`
     : vis && vis.not_owned ? `<p class="empty">${esc(t("identify.visionNotOwned"))}</p>` : "";
   $("identify").innerHTML = `<div class="pending">
-    <h3><span class="swatch" style="background:${esc(res.color)}"></span> ${esc(t("identify.closest"))}</h3>
+    <h3><span class="swatch" style="background:${esc(safeColor(res.color))}"></span> ${esc(t("identify.closest"))}</h3>
     ${note}${read}${add}
     <div class="row">
       ${cands.map((c) => `<button onclick="focusCapsule(${c.id})">${esc(c.name)}<span class="fam">${esc(c.family)} · ${esc(t("identify.inStock", { count: c.count }))}</span></button>`).join("")}

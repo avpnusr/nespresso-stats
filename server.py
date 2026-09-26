@@ -72,6 +72,10 @@ def connect(path=DB_PATH) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    # Threads of ThreadingHTTPServer share the db file; wait instead of erroring on
+    # a writer, and let readers proceed while a write commits.
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 
@@ -190,6 +194,12 @@ def resolve_pending(conn, capsule_id: int, brew_id: int | None = None) -> dict:
             "SELECT id FROM brews WHERE capsule_id IS NULL AND delta < 0 ORDER BY id LIMIT 1"
         ).fetchone()
         brew_id = pend["id"] if pend else None
+    else:
+        # a client-supplied id must point at a genuinely pending brew — resolving an
+        # already-assigned one would double-decrement the capsule
+        row = conn.execute("SELECT capsule_id, delta FROM brews WHERE id = ?", (brew_id,)).fetchone()
+        if row is None or row["capsule_id"] is not None or row["delta"] >= 0:
+            raise ValueError("not a pending brew")
     if brew_id is None:
         raise ValueError("no pending brew")
     dec(conn, capsule_id)
@@ -494,7 +504,7 @@ def notify_check(conn: sqlite3.Connection, send=None) -> None:
         return  # unconfigured: don't record episodes either, so configuring it later
     send = send or ntfy_send    # immediately reports what is low / due right now
     low = {r["id"] for r in conn.execute("SELECT id FROM capsules WHERE count <= threshold")}
-    notified = {int(x) for x in get_setting(conn, "notified_low").split(",") if x}
+    notified = {int(x) for x in get_setting(conn, "notified_low").split(",") if x.isdigit()}
     for cid in sorted(low - notified):
         r = conn.execute("SELECT name, count FROM capsules WHERE id = ?", (cid,)).fetchone()
         if r:  # a failed send still marks the episode done — a retry storm is worse
@@ -526,7 +536,10 @@ def notify_async() -> None:
     set and send duplicates."""
     def run():
         with _notify_lock:
-            notify_check(connect())
+            try:
+                notify_check(connect())
+            except Exception as err:  # noqa: BLE001 - one bad settings row must not
+                print(f"notify failed: {err}", file=sys.stderr)  # kill every future check
     threading.Thread(target=run, daemon=True).start()
 
 
@@ -649,7 +662,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
-        return json.loads(self.rfile.read(length) or b"{}")
+        if length > 10 * 1024 * 1024:  # photos come in at ~1024px; anything bigger is abuse
+            self._send(413, {"error": "body too large"})
+            raise ConnectionError("body too large")
+        data = json.loads(self.rfile.read(length) or b"{}")
+        return data if isinstance(data, dict) else {}  # a non-dict body is just a bad payload
 
     def _conn(self) -> sqlite3.Connection:
         return connect()
@@ -697,6 +714,8 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"error": "invalid json"})
             return
+        except ConnectionError:
+            return
         conn = self._conn()
         try:
             if url.path == "/api/capsules":
@@ -743,16 +762,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, {"error": "not found"})
             if url.path not in ("/api/identify", "/api/notify-test"):
                 notify_async()  # a state change may have crossed a reminder threshold
-        except (ValueError, KeyError, sqlite3.Error) as err:
+        except (ValueError, KeyError, TypeError, sqlite3.Error) as err:  # TypeError: wrong payload types
             self._send(400, {"error": str(err)})
 
     def _upsert_capsule(self, conn, payload):
         fields = {k: payload.get(k, "") for k in ("name", "family", "color", "image", "notes")}
         if not fields["name"] or not fields["family"]:
             raise ValueError("name and family are required")
-        count = int(payload.get("count", 0))
-        price = float(payload.get("price") or 0)
-        threshold = int(payload.get("threshold") or 2)
+        count = max(0, int(payload.get("count", 0) or 0))
+        price = max(0.0, float(payload.get("price") or 0))
+        # `or 2` would swallow an explicit 0 ("never warn"), so test for None instead
+        threshold = payload.get("threshold")
+        threshold = max(0, int(threshold)) if threshold is not None else 2
         intensity = max(0, min(13, int(payload.get("intensity") or 0)))
         special = 1 if payload.get("special") else 0
         if payload.get("id"):
@@ -906,6 +927,13 @@ def selftest() -> None:
         assert conn.execute("SELECT count FROM capsules WHERE id=?", (intenso,)).fetchone()[0] == 4
         assert conn.execute("SELECT capsule_id FROM brews WHERE id=?", (bid,)).fetchone()[0] == intenso
         assert len(brew_stats(conn)["brews"]) >= 1
+
+        # resolving only works on genuinely pending brews — an already-assigned id is refused
+        try:
+            resolve_pending(conn, intenso, bid)
+            raise AssertionError("expected ValueError for non-pending brew")
+        except ValueError:
+            pass
 
         # translation files are discovered for the language picker
         langs = available_languages()

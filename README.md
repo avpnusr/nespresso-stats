@@ -20,7 +20,9 @@ python3 server.py --selftest
 Data lives in `data/nespresso.db` (SQLite). The first run seeds a starter
 catalogue from `capsules.json`; edit or delete those rows freely.
 
-- `PORT=9000 HOST=0.0.0.0 python3 server.py` to expose it on your LAN.
+- `PORT=9000 HOST=0.0.0.0 python3 server.py` to expose it on your LAN. The server
+  has **no login** — it is built for a trusted home network. Expose it to the
+  internet only behind an authenticating reverse proxy.
 - `NESPRESSO_DB=/path/to.db` to move the database.
 
 ### Docker
