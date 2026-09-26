@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nespresso Stats</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/favicon-180.png">
+<style>
+  :root, html[data-theme="dark"] {
+    --bg: #14100d; --panel: #1f1813; --panel-2: #291f18; --line: #3a2c22;
+    --text: #f3e9dd; --muted: #a89383; --accent: #d9a441; --danger: #c0553f; --ok: #7aa05a;
+    --glow: #2a1f17; --on-accent: #201607; --info: #6fc6de;
+    color-scheme: dark;
+  }
+  html[data-theme="light"] {
+    --bg: #f4efe7; --panel: #ffffff; --panel-2: #ece4d7; --line: #dcd2c3;
+    --text: #2b211a; --muted: #85705c; --accent: #a9741d; --danger: #b3402b; --ok: #4d7c2f;
+    --glow: #ffffff; --on-accent: #231505; --info: #22789a;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(1200px 600px at 50% -10%, var(--glow), var(--bg));
+         color: var(--text); font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 24px; max-width: 1180px; margin: 0 auto; padding: 28px 20px 10px; flex-wrap: wrap; }
+  header svg, header img.machine { width: 104px; height: 140px; object-fit: contain; flex: none; }
+  .title h1 { margin: 0; font-size: 30px; letter-spacing: .3px; }
+  .title p { margin: 4px 0 0; color: var(--muted); }
+  .stats { display: flex; gap: 14px; margin-left: auto; flex-wrap: wrap; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 16px; min-width: 92px; }
+  .stat b { display: block; font-size: 24px; color: var(--accent); }
+  .stat span { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 8px 20px 80px; }
+  .bar { display: flex; align-items: center; gap: 10px; margin: 20px 0 14px; flex-wrap: wrap; }
+  button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line);
+           background: var(--panel-2); color: var(--text); padding: 8px 13px; transition: .15s; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+  button.ghost { background: transparent; }
+  button.danger { color: var(--danger); }
+  .pending { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, var(--panel)), var(--panel)); border: 1px solid var(--accent); border-radius: 14px; padding: 14px 18px; margin: 18px 0; }
+  .pending h3 { margin: 0 0 8px; color: var(--accent); }
+  .pending .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .pending.maint { background: linear-gradient(90deg, color-mix(in srgb, var(--info) 20%, var(--panel)), var(--panel)); border-color: var(--info); }
+  .pending.maint h3 { color: var(--info); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); grid-auto-rows: 1fr; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 10px; cursor: grab; }
+  .card.dragging { opacity: .4; }
+  .capsule-art { height: 108px; display: flex; align-items: center; justify-content: center; }
+  .capsule-art img { max-height: 108px; max-width: 100%; object-fit: contain; }
+  .name { font-weight: 600; }
+  .fam { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; }
+  .cost { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .intensity { display: flex; align-items: center; gap: 6px; }
+  .intensity .scale { display: inline-flex; gap: 2px; }
+  .intensity .scale i { width: 5px; height: 10px; border-radius: 2px; background: var(--line); }
+  .intensity .scale i.on { background: var(--accent); }
+  .intensity b { font-size: 12px; color: var(--muted); }
+  .count { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: auto; }
+  .count b { font-size: 22px; min-width: 34px; text-align: center; }
+  .count.low b { color: var(--danger); }
+  .card .tools { display: flex; gap: 6px; font-size: 13px; flex-wrap: wrap; justify-content: center; }
+  .card .tools button { padding: 4px 9px; white-space: nowrap; }
+  dialog { border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--text); padding: 22px; width: min(440px, 92vw); }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  dialog label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  dialog input, dialog select, dialog textarea { width: 100%; padding: 9px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+  dialog .check { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  dialog .check input { width: auto; margin: 0; }
+  dialog menu { display: flex; gap: 8px; justify-content: flex-end; margin: 18px 0 0; padding: 0; }
+  section h2 { font-size: 17px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin: 34px 0 12px; }
+  .brews { display: flex; flex-direction: column; gap: 6px; }
+  .brew { display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 14px; }
+  .brew time { color: var(--muted); margin-left: auto; font-size: 13px; }
+  .brew button { padding: 2px 9px; font-size: 12px; }
+  .ok { color: var(--ok); }
+  .empty { color: var(--muted); font-style: italic; }
+  .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: -1px; margin-right: 6px; border: 1px solid color-mix(in srgb, var(--text) 30%, transparent); }
+  .card.flash { animation: flash 1.1s ease-out 1; }
+  @keyframes flash { 0% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+  #identify .row button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+  #lang-select, #theme-select { font: inherit; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; flex: none; }
+  /* stats + reorder */
+  .kpis { display: flex; gap: 14px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .reorder { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 12px; }
+  .reorder:empty { display: none; }
+  .reorder .fam { margin-right: 2px; }
+  .heatmap { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 12px); gap: 3px; margin: 6px 0; }
+  .hm { width: 12px; height: 12px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); }
+  .hm.l1 { background: color-mix(in srgb, var(--accent) 35%, var(--bg)); }
+  .hm.l2 { background: color-mix(in srgb, var(--accent) 60%, var(--bg)); }
+  .hm.l3 { background: color-mix(in srgb, var(--accent) 85%, var(--bg)); }
+  .hm.l4 { background: var(--accent); }
+  .sub { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin: 16px 0 6px; }
+  .bar-row { display: grid; grid-template-columns: minmax(90px, 160px) 34px 1fr; align-items: center; gap: 10px; font-size: 13px; margin: 3px 0; }
+  .bar-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-row b { text-align: right; color: var(--muted); }
+  .bar-row i { display: block; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 75%, #000)); }
+  details#trends { margin-top: 6px; }
+  details#trends summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <div id="machine-art"></div>
+  <div class="title">
+    <h1 id="machine-name">My Vertuo</h1>
+    <p id="machine-model">Vertuo · capsule inventory</p>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="s-caps">0</b><span data-i18n="stat.capsules">capsules</span></div>
+    <div class="stat"><b id="s-types">0</b><span data-i18n="stat.types">types</span></div>
+    <div class="stat"><b id="s-low">0</b><span data-i18n="stat.low">running low</span></div>
+  </div>
+  <select id="theme-select" onchange="setTheme(this.value)" data-i18n-title="theme.title">
+    <option value="auto" data-i18n="theme.auto">Auto</option>
+    <option value="dark" data-i18n="theme.dark">Dark</option>
+    <option value="light" data-i18n="theme.light">Light</option>
+  </select>
+  <select id="lang-select" onchange="setLang(this.value)" data-i18n-title="lang.title"></select>
+</header>
+
+<main>
+  <div id="pending"></div>
+  <div id="maintenance"></div>
+
+  <div class="bar">
+    <button class="primary" onclick="openEditor()" data-i18n="btn.add">+ Add capsule</button>
+    <button onclick="pickPhoto()" data-i18n="btn.identify">📷 Identify from photo</button>
+    <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
+    <button class="ghost" onclick="openMachine()" data-i18n="btn.machine">⚙ Machine</button>
+    <button class="ghost" onclick="logMaintenance('clean')" data-i18n="btn.cleaned">🧽 Cleaned</button>
+    <button class="ghost" onclick="logMaintenance('descale')" data-i18n="btn.descaled">🧴 Descaled</button>
+    <span class="empty" id="hint"></span>
+  </div>
+
+  <div id="identify"></div>
+
+  <div class="grid" id="grid"></div>
+
+  <section>
+    <h2 data-i18n="section.stats">Coffee stats</h2>
+    <div class="kpis" id="kpis"></div>
+    <div class="reorder" id="reorder"></div>
+    <details id="trends">
+      <summary data-i18n="section.trends">Coffee trends</summary>
+      <div id="trends-body"></div>
+    </details>
+  </section>
+
+  <section><h2 data-i18n="section.activity">Recent activity</h2><div class="brews" id="brews"></div></section>
+</main>
+
+<dialog id="editor">
+  <form method="dialog" id="editor-form">
+    <h3 id="editor-title" data-i18n="dialog.add">Add capsule</h3>
+    <div id="known-row" hidden>
+      <label for="f-known" data-i18n="field.known">Known capsule</label>
+      <select id="f-known"></select>
+    </div>
+    <input type="hidden" id="f-id">
+    <label data-i18n="field.name">Capsule name</label><input id="f-name" required>
+    <label data-i18n="field.family">Family</label><select id="f-family"></select>
+    <label data-i18n="field.photo">Photo URL (optional)</label><input id="f-image" placeholder="https://…">
+    <label data-i18n="field.color">Capsule colour</label><input id="f-color" type="color" value="#6b4f3a">
+    <label data-i18n="field.intensity">Intensity (0 = not set, 1–13)</label><input id="f-intensity" type="number" min="0" max="13" value="0">
+    <label data-i18n="field.count">Count</label><input id="f-count" type="number" min="0" value="10">
+    <label data-i18n="field.price">Price per capsule (€, optional)</label><input id="f-price" type="number" min="0" step="0.01" value="0">
+    <label data-i18n="field.threshold">Low-stock threshold</label><input id="f-threshold" type="number" min="0" value="2">
+    <label class="check"><input type="checkbox" id="f-special"> <span data-i18n="field.special">Limited edition (seasonal)</span></label>
+    <label data-i18n="field.notes">Notes</label><textarea id="f-notes" rows="2"></textarea>
+    <menu><button value="cancel" class="ghost" formnovalidate data-i18n="action.cancel">Cancel</button><button id="f-save" class="primary" value="save" data-i18n="action.save">Save</button></menu>
+  </form>
+</dialog>
+
+<dialog id="machine-dialog">
+  <form method="dialog" id="machine-form">
+    <h3 data-i18n="dialog.machine">Machine</h3>
+    <label data-i18n="field.machineName">Name</label><input id="m-name">
+    <label data-i18n="field.model">Model</label><input id="m-model">
+    <label data-i18n="field.photo">Photo URL (optional)</label><input id="m-image" placeholder="https://…">
+    <label data-i18n="field.sleeve">Sleeve size (one-tap restock amount)</label><input id="m-sleeve" type="number" min="1" value="10">
+    <label data-i18n="field.cleanEvery">Clean every (days)</label><input id="m-clean" type="number" min="1" value="10">
+    <label data-i18n="field.descaleEvery">Descale every (days)</label><input id="m-descale" type="number" min="1" value="90">
+    <label data-i18n="field.ntfy">Push notifications — ntfy topic URL (optional)</label>
+    <div style="display:flex; gap:8px">
+      <input id="m-ntfy" placeholder="https://ntfy.sh/my-topic" style="flex:1">
+      <button type="button" class="ghost" style="white-space:nowrap" onclick="testNotify()" data-i18n="btn.testNotify">Send test</button>
+    </div>
+    <div class="sub" data-i18n="backup.title" style="margin-top:16px">Backup</div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap">
+      <button type="button" class="ghost" onclick="exportBackup()" data-i18n="backup.export">💾 Export backup</button>
+      <button type="button" class="ghost" onclick="pickRestore()" data-i18n="backup.restore">Restore backup…</button>
+      <input type="file" id="restore-input" accept="application/json,.json" hidden>
+    </div>
+    <menu><button value="cancel" class="ghost" formnovalidate data-i18n="action.cancel">Cancel</button><button class="primary" value="save" data-i18n="action.save">Save</button></menu>
+  </form>
+</dialog>
+
+<dialog id="brew-dialog">
+  <form method="dialog" id="brew-form">
+    <h3 data-i18n="dialog.changeCapsule">Change capsule</h3>
+    <input type="hidden" id="b-id">
+    <label data-i18n="field.whichCapsule">Which capsule was it?</label><select id="b-capsule"></select>
+    <menu><button value="cancel" class="ghost" formnovalidate data-i18n="action.cancel">Cancel</button><button class="primary" value="save" data-i18n="action.save">Save</button></menu>
+  </form>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = { capsules: [], brews: [], pending: [], maintenance: [], machine: {}, families: [] };
+let stats = [];
+
+const MAINT = { clean: { icon: "🧽" }, descale: { icon: "🧴" } };
+
+const sleeveSize = () => parseInt(state.machine.sleeve_size, 10) || 10;
+const thresholdOf = (c) => (c.threshold ?? 2);
+const isLow = (c) => c.count <= thresholdOf(c);
+const dayKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
+const daysAgo = (ts) => Math.floor((Date.now() - new Date(ts)) / 86400000);
+
+async function api(path, method = "GET", body) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.json();
+}
+
+const capsuleArt = (c) => {
+  if (c.image) return `<img src="${esc(c.image)}" alt="" onerror="this.outerHTML=capsuleSVG('${c.color}')">`;
+  return capsuleSVG(c.color);
+};
+const intensityBar = (c) => c.intensity
+  ? `<span class="intensity" title="${esc(t("card.intensityTitle", { n: c.intensity }))}"><span class="scale">${Array.from({ length: 13 }, (_, i) => `<i class="${i < c.intensity ? "on" : ""}"></i>`).join("")}</span><b>${c.intensity}</b></span>`
+  : "";
+const costLabel = (c) => c.price > 0 ? `<span class="cost">€${c.price.toFixed(2)}/cap</span>` : "";
+function capsuleSVG(color) {
+  return `<svg viewBox="0 0 60 96" width="60" height="96" aria-hidden="true">
+    <path d="M10 22 h40 l-5 62 a6 6 0 0 1 -6 6 h-18 a6 6 0 0 1 -6 -6 z" fill="${color}"/>
+    <ellipse cx="30" cy="22" rx="21" ry="7" fill="#fff" opacity=".85"/>
+    <ellipse cx="30" cy="22" rx="15" ry="4" fill="#000" opacity=".12"/>
+  </svg>`;
+}
+const machineSVG = () => `<svg viewBox="0 0 120 160" width="104" height="140" aria-hidden="true">
+  <rect x="18" y="16" width="84" height="134" rx="16" fill="#2b2b2b"/>
+  <rect x="30" y="30" width="60" height="42" rx="9" fill="#3a3a3a"/>
+  <circle cx="60" cy="51" r="13" fill="#d9a441"/>
+  <rect x="34" y="90" width="52" height="9" rx="4.5" fill="#3a3a3a"/>
+  <path d="M44 110 h32 v14 a8 8 0 0 1 -8 8 h-16 a8 8 0 0 1 -8 -8 z" fill="#efe6d5"/>
+  <rect x="28" y="140" width="64" height="6" rx="3" fill="#111"/>
+</svg>`;
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
+
+// ---------------------------------------------------------------- theme
+// Choice lives in localStorage ("auto" | "dark" | "light"); auto follows the OS via
+// matchMedia. JS resolves it to an explicit data-theme so the CSS stays two flat blocks.
+const prefersLight = matchMedia("(prefers-color-scheme: light)");
+function applyTheme() {
+  const saved = localStorage.getItem("theme") || "auto";
+  document.documentElement.dataset.theme =
+    saved === "auto" ? (prefersLight.matches ? "light" : "dark") : saved;
+  $("theme-select").value = saved;
+}
+function setTheme(value) { localStorage.setItem("theme", value); applyTheme(); }
+prefersLight.addEventListener("change", applyTheme);
+
+// ---------------------------------------------------------------- i18n
+// Translations live in static/i18n/<code>.json. English is the fallback; any missing
+// key in another language resolves to it. A contributor adds a file and is done — the
+// language picker discovers files via GET /api/languages.
+let lang = "en";
+let languages = [];
+const I18N = {};
+const t = (key, vars) => {
+  const s = (I18N[lang] && I18N[lang][key]) ?? (I18N.en && I18N.en[key]) ?? key;
+  return vars ? s.replace(/\{(\w+)\}/g, (_, k) => (vars[k] ?? "")) : s;
+};
+const maintLabel = (task) => t("maint." + task);
+const sourceLabel = (s) => ["auto", "manual", "restock"].includes(s) ? t("source." + s) : s;
+
+async function loadStrings() {
+  const codes = lang === "en" ? ["en"] : ["en", lang];
+  await Promise.all(codes.map(async (code) => {
+    const res = await fetch(`/static/i18n/${code}.json`);
+    if (res.ok) I18N[code] = (await res.json()).strings || {};
+  }));
+}
+
+function applyStatic() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => { el.title = t(el.dataset.i18nTitle); });
+}
+
+function buildLangSelect() {
+  const el = $("lang-select");
+  el.innerHTML = languages.map((l) =>
+    `<option value="${esc(l.code)}" title="${esc(l.label)}">${l.flag ? esc(l.flag) + " " : ""}${esc(l.code.toUpperCase())}</option>`
+  ).join("");
+  el.value = lang;
+}
+
+async function setLang(code) {
+  lang = code;
+  localStorage.setItem("lang", code);
+  await loadStrings();
+  applyStatic();
+  render();
+}
+
+function render() {
+  const m = state.machine;
+  $("machine-name").textContent = m.machine_name || "My Vertuo";
+  $("machine-model").textContent = (m.machine_model || "Vertuo") + " · " + t("header.subtitle");
+  $("machine-art").innerHTML = m.machine_image
+    ? `<img class="machine" src="${esc(m.machine_image)}" alt="" onerror="this.outerHTML=machineSVG()">`
+    : machineSVG();
+
+  $("s-caps").textContent = state.capsules.reduce((n, c) => n + c.count, 0);
+  $("s-types").textContent = state.capsules.filter((c) => c.count > 0).length;
+  $("s-low").textContent = state.capsules.filter(isLow).length;
+
+  $("pending").innerHTML = state.pending.map((p) => {
+    const options = state.capsules.filter((c) => c.family === p.family && c.count > 0);
+    return `<div class="pending"><h3>☕ ${esc(t("pending.brewed", { family: p.family }))}</h3>
+      <div class="row">
+        ${options.map((c) => `<button onclick="resolve(${c.id},${p.id})">${esc(c.name)}</button>`).join("")}
+        ${options.length ? "" : `<span class="empty">${esc(t("pending.none"))}</span>`}
+        <button class="ghost danger" onclick="dismiss(${p.id})">${esc(t("action.ignore"))}</button>
+      </div></div>`;
+  }).join("");
+
+  $("maintenance").innerHTML = state.maintenance.filter((m) => m.due).map((m) => {
+    const icon = (MAINT[m.task] || {}).icon || "🛠";
+    const label = maintLabel(m.task);
+    const ago = m.last ? daysAgo(m.last) : null;
+    const when = ago == null ? t("maint.never") : t(ago === 1 ? "maint.lastDone1" : "maint.lastDone", { days: ago });
+    return `<div class="pending maint"><h3>${icon} ${esc(t("maint.due", { label, when }))}</h3>
+      <div class="row">
+        <button class="primary" onclick="logMaintenance('${m.task}')">${esc(t("maint.markDone", { label }))}</button>
+        <span class="empty">${esc(t("maint.every", { days: m.every_days }))}</span>
+      </div></div>`;
+  }).join("");
+
+  $("f-family").innerHTML = state.families.map((f) => `<option>${esc(f)}</option>`).join("");
+
+  $("grid").innerHTML = state.capsules.map((c) => `
+    <div class="card" id="cap-${c.id}" draggable="true">
+      <div class="capsule-art">${capsuleArt(c)}</div>
+      <div>
+        <div class="name">${esc(c.name)}${c.special ? ` <span title="${esc(t("card.special"))}" style="color: var(--accent)">★</span>` : ""}</div>
+        <div class="fam">${esc(c.family)}</div>
+      </div>
+      <div class="meta">${intensityBar(c)}${costLabel(c)}</div>
+      <div class="count ${isLow(c) ? "low" : ""}">
+        <button onclick="change(${c.id},1)" title="${esc(t("card.addOne"))}">+</button>
+        <b>${c.count}</b>
+        <button onclick="change(${c.id},-1)" title="${esc(t("card.removeOne"))}">−</button>
+      </div>
+      <div class="tools">
+        <button class="ghost" onclick="brew(${c.id})">${esc(t("card.brew"))}</button>
+        <button class="ghost" onclick="openEditorById(${c.id})">${esc(t("card.edit"))}</button>
+        <button class="ghost danger" onclick="remove(${c.id})">${esc(t("card.delete"))}</button>
+      </div>
+    </div>`).join("") || `<p class="empty">${esc(t("card.empty"))}</p>`;
+
+  renderStats();
+  renderActivity();
+}
+
+function renderStats() {
+  const now = new Date();
+  const dayStart = (n) => { const d = new Date(now); d.setDate(d.getDate() - n); d.setHours(0, 0, 0, 0); return d; };
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const brews = stats.filter((b) => b.delta < 0);
+  const priceOf = Object.fromEntries(state.capsules.map((c) => [c.id, c.price || 0]));
+
+  const today = brews.filter((b) => dayKey(b.ts) === dayKey(now)).length;
+  const week = brews.filter((b) => new Date(b.ts) >= dayStart(6)).length;
+  const avg = brews.filter((b) => new Date(b.ts) >= dayStart(13)).length / 14;
+  const spend = brews.filter((b) => new Date(b.ts) >= monthStart)
+    .reduce((s, b) => s + (priceOf[b.capsule_id] || 0), 0);
+
+  const tile = (v, label) => `<div class="stat"><b>${esc(v)}</b><span>${esc(label)}</span></div>`;
+  $("kpis").innerHTML =
+    tile(today, t("kpi.today")) + tile(week, t("kpi.week")) +
+    tile(avg.toFixed(1), t("kpi.avg")) + tile("€" + spend.toFixed(2), t("kpi.month"));
+
+  const low = state.capsules.filter(isLow);
+  const daysLeft = (c) => {
+    const rate = brews.filter((b) => b.capsule_id === c.id && new Date(b.ts) >= dayStart(13)).length / 14;
+    return rate > 0 ? Math.floor(c.count / rate) : null;
+  };
+  $("reorder").innerHTML = low.length
+    ? `<span class="fam">${esc(t("low.title"))}</span>` + low.map((c) => {
+        const dl = daysLeft(c);
+        const delta = Math.max(0, sleeveSize() - c.count);
+        return `<button onclick="restock(${c.id})" ${delta ? "" : "disabled"}>${esc(c.name)} · ${c.count}${dl != null ? ` · ${esc(t("low.daysLeft", { days: dl }))}` : ""}${delta ? ` → ${sleeveSize()}` : ""}</button>`;
+      }).join("")
+    : "";
+
+  const bars = (rows) => {
+    const max = Math.max(1, ...rows.map((r) => r.n));
+    return rows.map((r) => `<div class="bar-row"><span>${esc(r.label)}</span><b>${r.n}</b><i style="width:${Math.round(100 * r.n / max)}%"></i></div>`).join("")
+      || `<p class="empty">${esc(t("trends.empty"))}</p>`;
+  };
+  const rank = (by) => {
+    const counts = {};
+    brews.forEach((b) => { const k = by(b); if (k) counts[k] = (counts[k] || 0) + 1; });
+    return Object.entries(counts).map(([k, n]) => ({ label: k, n })).sort((a, b) => b.n - a.n).slice(0, 6);
+  };
+  const nameOf = (id) => (state.capsules.find((c) => c.id === id) || {}).name;
+
+  $("trends-body").innerHTML =
+    `<div class="sub">${esc(t("trends.weeks"))}</div>${heatmap(brews)}` +
+    `<div class="sub">${esc(t("trends.most"))}</div>${bars(rank((b) => nameOf(b.capsule_id)))}` +
+    `<div class="sub">${esc(t("trends.byFamily"))}</div>${bars(rank((b) => (state.capsules.find((c) => c.id === b.capsule_id) || {}).family))}`;
+}
+
+function heatmap(brews) {
+  const counts = {};
+  brews.forEach((b) => { const k = dayKey(b.ts); counts[k] = (counts[k] || 0) + 1; });
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const start = new Date(today);
+  start.setDate(today.getDate() - ((today.getDay() + 6) % 7) - 7 * 11);  // Monday, 11 weeks back
+  const cells = [];
+  for (const d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+    const k = dayKey(d), n = counts[k] || 0;
+    const lvl = n === 0 ? 0 : n === 1 ? 1 : n === 2 ? 2 : n === 3 ? 3 : 4;
+    const title = t(n === 1 ? "heat.title1" : "heat.title", { date: k, n });
+    cells.push(`<div class="hm l${lvl}" title="${esc(title)}"></div>`);
+  }
+  return `<div class="heatmap">${cells.join("")}</div>`;
+}
+
+function renderActivity() {
+  $("brews").innerHTML = state.brews.map((b) => {
+    const maint = MAINT[b.source];
+    const restock = b.delta > 0;
+    const label = maint ? esc(maintLabel(b.source)) : b.capsule_name ? esc(b.capsule_name) : esc(t("activity.unknown"));
+    return `<div class="brew">
+      <span>${maint ? maint.icon : restock ? "📦" : b.capsule_name ? "☕" : "❓"} ${label} ${restock ? `<b class="ok">+${b.delta}</b>` : ""}</span>
+      <span class="fam">${maint ? esc(t("activity.maintenance")) : esc(b.family || "") + " · " + esc(sourceLabel(b.source))}</span>
+      <time>${new Date(b.ts).toLocaleString()}</time>
+      ${b.delta < 0 ? `<button class="ghost" onclick="openBrewEditor(${b.id})">${esc(t("activity.change"))}</button>` : ""}
+      <button class="ghost" onclick="undoBrew(${b.id})" title="${esc(t("activity.undo"))}">↺</button>
+    </div>`;
+  }).join("") || `<p class="empty">${esc(t("activity.empty"))}</p>`;
+}
+
+function hint(msg) {
+  $("hint").textContent = msg;
+  setTimeout(() => { if ($("hint").textContent === msg) $("hint").textContent = ""; }, 4000);
+}
+
+// ---------------------------------------------------------------- backup
+async function exportBackup() {
+  const blob = new Blob([JSON.stringify(await api("/api/export"), null, 2)], { type: "application/json" });
+  const a = Object.assign(document.createElement("a"), {
+    href: URL.createObjectURL(blob),
+    download: `nespresso-backup-${dayKey(new Date())}.json`,
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function pickRestore() { $("restore-input").click(); }
+
+$("restore-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    alert(t("backup.invalid"));
+    return;
+  }
+  if (!confirm(t("confirm.restore"))) return;
+  const res = await api("/api/import", "POST", data);
+  if (res.error) { alert(t("backup.invalid")); return; }
+  hint(t("backup.restored"));
+  await load();
+});
+
+async function load() {
+  const [s, st] = await Promise.all([api("/api/state"), api("/api/stats")]);
+  state = s; stats = st.brews || [];
+  render();
+}
+
+async function change(id, delta) { await api("/api/brew", "POST", { capsule_id: id, delta, log: false }); await load(); }
+async function brew(id) { await api("/api/brew", "POST", { capsule_id: id, delta: -1, log: true }); await load(); }
+async function restock(id) {
+  const c = state.capsules.find((x) => x.id === id);
+  const delta = sleeveSize() - c.count;
+  if (delta <= 0) return;
+  await api("/api/brew", "POST", { capsule_id: id, delta, log: true, source: "restock" });
+  await load();
+}
+async function undoBrew(id) { await api(`/api/brews?id=${id}`, "DELETE"); await load(); }
+async function logMaintenance(task) { await api("/api/maintenance", "POST", { task }); await load(); }
+async function resolve(capsule_id, brew_id) { await api("/api/resolve", "POST", { capsule_id, brew_id }); await load(); }
+async function dismiss(brew_id) { await api("/api/dismiss", "POST", { brew_id }); await load(); }
+async function remove(id) {
+  if (!confirm(t("confirm.delete"))) return;
+  await fetch(`/api/capsules?id=${id}`, { method: "DELETE" });
+  await load();
+}
+
+function openBrewEditor(brewId) {
+  const b = state.brews.find((x) => x.id === brewId);
+  $("b-id").value = brewId;
+  $("b-capsule").innerHTML = state.capsules.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  if (b && b.capsule_id) $("b-capsule").value = b.capsule_id;
+  $("brew-dialog").showModal();
+}
+$("brew-form").addEventListener("submit", async (e) => {
+  if (e.submitter?.value !== "save") return;
+  e.preventDefault();
+  await api("/api/brews", "POST", {
+    brew_id: parseInt($("b-id").value, 10),
+    capsule_id: parseInt($("b-capsule").value, 10),
+  });
+  $("brew-dialog").close();
+  await load();
+});
+
+function openEditorById(id) { openEditor(state.capsules.find((c) => c.id === id)); }
+function openEditor(c) {
+  $("editor-title").textContent = t(c ? "dialog.edit" : "dialog.add");
+  $("f-id").value = c?.id ?? "";
+  $("f-name").value = c?.name ?? "";
+  $("f-family").value = c?.family ?? state.families[0];
+  $("f-image").value = c?.image ?? "";
+  $("f-color").value = c?.color || "#6b4f3a";
+  $("f-intensity").value = c?.intensity ?? 0;
+  $("f-count").value = c?.count ?? 10;
+  $("f-price").value = c?.price ?? 0;
+  $("f-threshold").value = c?.threshold ?? 2;
+  $("f-special").checked = !!c?.special;
+  $("f-notes").value = c?.notes ?? "";
+  // Known capsules (catalogue entries you don't have a row for yet) fill the form in one pick.
+  const known = c ? [] : (state.known || []);
+  $("known-row").hidden = !known.length;
+  $("f-known").innerHTML = known.length
+    ? `<option value="">${esc(t("known.placeholder"))}</option>` +
+      known.map((k, i) => `<option value="${i}">${esc(k.name)}</option>`).join("")
+    : "";
+  $("editor").showModal();
+}
+$("f-known").addEventListener("change", (e) => {
+  const k = (state.known || [])[e.target.value];
+  if (!k) return;
+  $("f-name").value = k.name;
+  $("f-family").value = k.family;
+  $("f-color").value = k.color || "#6b4f3a";
+  $("f-image").value = k.image || "";
+  $("f-intensity").value = k.intensity ?? 0;
+});
+$("editor-form").addEventListener("submit", async (e) => {
+  if (e.submitter?.value !== "save") return;
+  e.preventDefault();
+  await api("/api/capsules", "POST", {
+    id: $("f-id").value || undefined,
+    name: $("f-name").value, family: $("f-family").value,
+    image: $("f-image").value, color: $("f-color").value,
+    count: parseInt($("f-count").value, 10) || 0,
+    price: parseFloat($("f-price").value) || 0,
+    intensity: parseInt($("f-intensity").value, 10) || 0,
+    threshold: parseInt($("f-threshold").value, 10) || 0,
+    special: $("f-special").checked ? 1 : 0,
+    notes: $("f-notes").value,
+  });
+  $("editor").close();
+  await load();
+});
+
+function pickPhoto() { $("photo-input").click(); }
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function dominantColor(img) {
+  const N = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = N;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, N, N);
+  const d = ctx.getImageData(0, 0, N, N).data;
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const [R, G, B] = [d[i], d[i + 1], d[i + 2]];
+    if (Math.min(R, G, B) > 210) continue;  // white background
+    if (Math.max(R, G, B) < 35) continue;   // shadow / barcode black
+    r += R; g += G; b += B; n++;
+  }
+  if (!n) { r = g = b = 128; n = 1; }
+  return [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
+}
+
+function downscale(img, max) {
+  const scale = Math.min(1, max / Math.max(img.width, img.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.7);
+}
+
+$("photo-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  $("identify").innerHTML = `<div class="pending"><h3>${esc(t("identify.busy"))}</h3></div>`;
+  try {
+    const img = await loadImage(file);
+    const hex = "#" + dominantColor(img).map((x) => x.toString(16).padStart(2, "0")).join("");
+    renderIdentify(await api("/api/identify", "POST", { color: hex, image: downscale(img, 1024) }));
+  } catch (err) {
+    $("identify").innerHTML = `<div class="pending"><h3>${esc(t("identify.failed"))}</h3></div>`;
+  }
+  e.target.value = "";
+});
+
+function clearIdentify() { $("identify").innerHTML = ""; }
+
+function focusCapsule(id) {
+  const el = $("cap-" + id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.remove("flash");
+  void el.offsetWidth;
+  el.classList.add("flash");
+}
+
+function renderIdentify(res) {
+  const cands = res.candidates || [];
+  const vis = res.vision;
+  const note = vis && vis.name
+    ? `<p>🤖 ${esc(t("identify.visionSuggests"))} <b>${esc(vis.name)}</b>${vis.reason ? " — " + esc(vis.reason) : ""}</p>`
+    : vis && vis.error ? `<p class="empty">${esc(t("identify.visionUnavailable"))} ${esc(vis.error)}</p>` : "";
+  // Show what the model actually transcribed: it explains both a hit and a miss, and it is the
+  // only clue the user gets when the photo was too small or blurry to read.
+  const read = vis && vis.text
+    ? `<p class="empty">${esc(t("identify.visionRead"))} <b>${esc(vis.text)}</b>${vis.name ? "" : " — " + esc(t("identify.visionNoMatch"))}</p>`
+    : res.vision_enabled && vis && !vis.error ? `<p class="empty">${esc(t("identify.visionNothingRead"))}</p>` : "";
+  const knownIdx = vis && vis.name ? (state.known || []).findIndex((k) => k.name === vis.name) : -1;
+  const add = knownIdx >= 0
+    ? `<button onclick="addKnown(${knownIdx})">${esc(t("btn.add"))}</button>`
+    : vis && vis.not_owned ? `<p class="empty">${esc(t("identify.visionNotOwned"))}</p>` : "";
+  $("identify").innerHTML = `<div class="pending">
+    <h3><span class="swatch" style="background:${esc(res.color)}"></span> ${esc(t("identify.closest"))}</h3>
+    ${note}${read}${add}
+    <div class="row">
+      ${cands.map((c) => `<button onclick="focusCapsule(${c.id})">${esc(c.name)}<span class="fam">${esc(c.family)} · ${esc(t("identify.inStock", { count: c.count }))}</span></button>`).join("")}
+      <button class="ghost" onclick="clearIdentify()">${esc(t("identify.close"))}</button>
+    </div>
+    <p class="empty">${esc(t("identify.note"))}
+    ${res.vision_enabled ? "" : esc(t("identify.visionHint"))}</p>
+  </div>`;
+}
+
+// Prefill the add dialog with a capsule the photo named but the inventory does not have.
+function addKnown(i) {
+  openEditor();
+  const sel = $("f-known");
+  sel.value = String(i);
+  sel.dispatchEvent(new Event("change"));
+  $("f-count").focus();
+}
+
+function openMachine() {
+  $("m-name").value = state.machine.machine_name || "";
+  $("m-model").value = state.machine.machine_model || "";
+  $("m-image").value = state.machine.machine_image || "";
+  $("m-sleeve").value = sleeveSize();
+  $("m-clean").value = (state.maintenance.find((m) => m.task === "clean") || {}).every_days || 10;
+  $("m-descale").value = (state.maintenance.find((m) => m.task === "descale") || {}).every_days || 90;
+  $("m-ntfy").value = state.machine.ntfy_url || "";
+  $("machine-dialog").showModal();
+}
+$("machine-form").addEventListener("submit", async (e) => {
+  if (e.submitter?.value !== "save") return;
+  e.preventDefault();
+  await api("/api/settings", "POST", {
+    machine_name: $("m-name").value, machine_model: $("m-model").value,
+    machine_image: $("m-image").value,
+    sleeve_size: parseInt($("m-sleeve").value, 10) || 10,
+    clean_days: parseInt($("m-clean").value, 10) || 10,
+    descale_days: parseInt($("m-descale").value, 10) || 90,
+    ntfy_url: $("m-ntfy").value.trim(),
+  });
+  $("machine-dialog").close();
+  await load();
+});
+
+async function testNotify() {
+  const res = await api("/api/notify-test", "POST", { url: $("m-ntfy").value.trim() });
+  alert(res.error ? `${t("notify.testFailed")} ${res.error}` : t("notify.sent"));
+}
+
+(async function init() {
+  applyTheme();
+  languages = await api("/api/languages");
+  const saved = localStorage.getItem("lang");
+  const browser = (navigator.language || "en").slice(0, 2).toLowerCase();
+  lang = [saved, browser, "en"].find((c) => languages.some((l) => l.code === c)) || "en";
+  await loadStrings();
+  buildLangSelect();
+  applyStatic();
+  await load();
+})();
+
+function dragOrder() {
+  const grid = $("grid");
+  let dragId = null;
+  grid.addEventListener("dragstart", (e) => {
+    const card = e.target.closest(".card");
+    if (!card) return;
+    dragId = card.id.slice(4);
+    card.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+  });
+  grid.addEventListener("dragover", (e) => {
+    const dragged = dragId && $("cap-" + dragId);
+    const over = e.target.closest(".card");
+    if (!dragged || !over || over === dragged) return;
+    e.preventDefault();
+    const r = over.getBoundingClientRect();
+    over.parentNode.insertBefore(dragged, e.clientY - r.top > r.height / 2 ? over.nextSibling : over);
+  });
+  grid.addEventListener("dragend", async () => {
+    if (!dragId) return;
+    dragId = null;
+    const ids = [...grid.querySelectorAll(".card")].map((c) => +c.id.slice(4));
+    await api("/api/order", "POST", { ids });
+    await load();
+  });
+}
+dragOrder();
+</script>
+</body>
+</html>

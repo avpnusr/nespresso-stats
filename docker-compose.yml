@@ -1,0 +1,18 @@
+services:
+  nespresso-stats:
+    build: .
+    ports:
+      - "8787:8787"
+    environment:
+      # Unraid-style uid/gid for the app user (default 99:100).
+      PUID: ${PUID:-99}
+      PGID: ${PGID:-100}
+      # Vision backend for photo identify (README → "Enabling a vision backend").
+      # Override in the shell or a .env file next to this file. `-` (not `:-`) on
+      # the first two on purpose: an empty value turns vision off.
+      VISION_BASE_URL: ${VISION_BASE_URL-http://127.0.0.1:11434/v1}
+      VISION_MODEL: ${VISION_MODEL-qwen3.5:4b}
+      VISION_API_KEY: ${VISION_API_KEY:-ollama}
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
