@@ -87,18 +87,27 @@ phone camera). It works in two stages:
    that colour shortlist** and asked to pick one — much easier than picking
    from the whole catalogue.
 
-The most reliable photo is the **underside of the capsule**: an upside-down pod
-prints its name around the aluminium base, next to the cup size (`VOLTESSO` ·
-`ESPRESSO` · `40 ml`), so the model can read it off exactly. Sleeves and boxes
-work the same way. A top-down photo of the bare dome has no text — there the
-result is a colour shortlist only.
+**What decides the result is the photo, not the model.** An upside-down pod
+prints its name and cup size around the aluminium base (`VOLTESSO` ·
+`ESPRESSO` · `40 ml`), and sleeves, boxes and product shots print it too — so
+photograph the **underside**, the sleeve or the box. With the name in the
+frame, all the model has to do is transcribe what it can see, which is the easy
+end of the job and exactly what the small default model is for.
+
+**A top-down photo of the bare dome is the hard case: no text at all.** There
+the model can only vote on colour, and that is where even the large cloud models
+in the table below are barely better than guessing. The default local
+`qwen3.5:4b` has nothing to add on a dome shot — you still get the browser's
+colour shortlist, but treat it as a guess. If you want identify to work without
+fiddling, shoot the underside, not the top.
 
 Colour ranking is only as good as the stored colours, so the seed colours in
 `capsules.json` were sampled from the capsule photos, not guessed.
 
 ### Benchmarked on real capsule photos
 
-24 AI-generated capsule photos, exact-name accuracy:
+24 AI-generated capsule photos, exact-name accuracy — the capsules' own product
+shots, names printed on the artwork:
 
 | Approach | Correct |
 | --- | --- |
