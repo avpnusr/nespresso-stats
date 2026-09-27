@@ -236,7 +236,7 @@ happened, and tap the capsule in the dashboard.
 
 ## Languages
 
-The UI ships in English and German, with a language picker in the top right showing
+The UI ships in English, German and French, with a language picker in the top right showing
 the flag and short code (e.g. `🇬🇧 EN`). The choice is remembered per browser
 (`localStorage`); on a first visit the browser's language is used when a matching
 translation exists, otherwise English.
