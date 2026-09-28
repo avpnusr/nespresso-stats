@@ -164,8 +164,17 @@ def log_brew(conn, capsule_id, family, source, ts=None, delta=-1) -> int:
     return cur.lastrowid
 
 
-def brew_detected(conn, family, source="auto") -> dict:
-    """A machine reported a brew of `family`. Decrement if unambiguous, else queue it."""
+def brew_detected(conn, family, source="auto", capsule=None) -> dict:
+    """A machine (or a Stream Deck key) reported a brew. An exact capsule name wins — a key
+    knows which pod it was — otherwise fall back to `family`: decrement if unambiguous, else
+    queue it. The name is matched like a photo read, so 'Intenso' or a typo both work."""
+    if capsule:
+        hit = match_capsule(conn, capsule)
+        if hit:  # known capsule name, no family guessing needed
+            dec(conn, hit["id"])
+            log_brew(conn, hit["id"], hit["family"], source)
+            conn.commit()
+            return {"action": "decremented", "family": hit["family"], "capsule": hit["name"]}
     fam = normalize_family(family)
     rows = conn.execute(
         "SELECT id, name, count FROM capsules WHERE lower(family) = lower(?) AND count > 0 ORDER BY name", (fam,)
@@ -723,7 +732,8 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == "/api/brew":
                 self._brew(conn, payload)
             elif url.path == "/api/brew-detected":
-                result = brew_detected(conn, payload.get("family"), payload.get("source", "auto"))
+                result = brew_detected(conn, payload.get("family"), payload.get("source", "auto"),
+                                       payload.get("capsule"))
                 self._send(200, result)
             elif url.path == "/api/resolve":
                 self._send(200, resolve_pending(
@@ -873,6 +883,14 @@ def selftest() -> None:
         res = brew_detected(conn, "3")  # cloud family id for Gran Lungo
         assert res["action"] == "decremented" and res["capsule"] == "Fortado", res
         assert conn.execute("SELECT count FROM capsules WHERE name='Fortado'").fetchone()[0] == 2
+
+        # an exact capsule name (Stream Deck key) decrements without a family guess
+        conn.execute("UPDATE capsules SET count = 2 WHERE name = 'Intenso'")
+        res = brew_detected(conn, None, capsule="Intenso")
+        assert res["action"] == "decremented" and res["capsule"] == "Intenso", res
+        assert conn.execute("SELECT count FROM capsules WHERE name='Intenso'").fetchone()[0] == 1
+        # an unmatchable name falls back to the family rule (Fortado is the only Gran Lungo)
+        assert brew_detected(conn, "Gran Lungo", capsule="Nope")["action"] == "decremented"
 
         # multiple candidates → pending, then resolve
         conn.execute("UPDATE capsules SET count = 2 WHERE name IN ('Melozio','Intenso')")
