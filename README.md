@@ -197,7 +197,18 @@ curl -X POST http://127.0.0.1:8787/api/brew-detected \
   -d '{"family":"Mug","source":"home-assistant"}'
 ```
 
-`family` accepts the name (`Mug`) or the cloud id (`"4"`). The server then:
+`family` accepts the name (`Mug`) or the cloud id (`"4"`). Add `capsule` when
+you know which pod it was — a Stream Deck key, or anything that can name it —
+and the exact capsule is decremented with no family guessing (the name is
+matched forgivingly, so a typo still lands):
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/brew-detected \
+  -H 'content-type: application/json' \
+  -d '{"capsule":"Intenso","source":"streamdeck"}'
+```
+
+If `capsule` is omitted or resolves to nothing, the `family` rule below applies. The server then:
 
 - **one capsule of that family in stock** → decrements it automatically;
 - **several in stock** → queues a *pending* brew, and the dashboard shows a
@@ -266,7 +277,7 @@ and reads its `language` field — drop the file in and it appears.
 | POST | `/api/capsules` | `{id?, name, family, color, image, notes, count, price, threshold, intensity, special}` (`special` = limited-edition ★) |
 | DELETE | `/api/capsules?id=N` | — |
 | POST | `/api/brew` | `{capsule_id, delta, log?, source?}` (delta `-1` = remove, `+1` = restock; `log:true` also records a brew, `source` defaults to `manual`) |
-| POST | `/api/brew-detected` | `{family, source?}` |
+| POST | `/api/brew-detected` | `{family?, capsule?, source?}` — `capsule` names the exact pod and wins; `family` alone falls back to the rule below |
 | POST | `/api/brews` | `{brew_id, capsule_id}` — reassign/resolve a brew |
 | DELETE | `/api/brews?id=N` | — (undo a brew/restock and fix the count) |
 | POST | `/api/identify` | `{color, image?}` — `color` is `#rrggbb`, `image` an optional data URL |
