@@ -64,6 +64,10 @@
     "maint.lastDone1": "fait il y a 1 jour",
     "maint.markDone": "Marquer {label} comme fait",
     "maint.every": "tous les {days} jours",
+    "maint.inDays": "{days} j",
+    "maint.dueShort": "à faire",
+    "maint.overdue": "{days} j de retard",
+    "maint.neverShort": "jamais",
 
     "card.addOne": "Ajouter une",
     "card.removeOne": "Retirer une",
