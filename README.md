@@ -88,6 +88,12 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
   reminders, at most once per episode (restocking or logging the task re-arms them).
   Works even if nobody opens the dashboard; it also catches up at startup.
 
+### Stream Deck
+
+A great addition if you want to trigger this dashboard from a Stream Deck:
+[`avpnusr/deckpresso`](https://github.com/avpnusr/deckpresso) — it can call
+`POST /api/brew-detected` with the exact capsule name.
+
 ## Identifying a capsule from a photo
 
 The dashboard has **📷 Identify from photo** (also captures straight from a
