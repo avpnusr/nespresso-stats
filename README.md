@@ -74,7 +74,8 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
 - **Upkeep reminders** for cleaning (default every 10 days) and descaling
   (default every 90 days, both editable in the Machine dialog): a banner appears
   when one is due, and logging it adds a Cleaning/Descaling entry to the activity
-  list. **🧽 Cleaned** / **🧴 Descaled** log it in one tap.
+  list. **🧽 Cleaned** / **🧴 Descaled** log it in one tap; each button also shows
+  the days left until the next one (how many days late once overdue).
 - Add / edit / delete capsules, optionally prefilled from the known-capsule
   catalogue (`capsules.json`), with optional price per capsule and a 1–13 intensity
   shown as a scale on each tile.
