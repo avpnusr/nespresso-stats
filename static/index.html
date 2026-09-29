@@ -39,6 +39,11 @@
   button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
   button.ghost { background: transparent; }
   button.danger { color: var(--danger); }
+  /* Upkeep countdown on the toolbar buttons (days until the next clean/descale). */
+  .cd { margin-left: 6px; font-variant-numeric: tabular-nums; }
+  .cd.ok { color: var(--muted); }
+  .cd.soon { color: var(--info); }
+  .cd.due { color: var(--danger); font-weight: 600; }
   .pending { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, var(--panel)), var(--panel)); border: 1px solid var(--accent); border-radius: 14px; padding: 14px 18px; margin: 18px 0; }
   .pending h3 { margin: 0 0 8px; color: var(--accent); }
   .pending .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -131,8 +136,8 @@
     <button onclick="pickPhoto()" data-i18n="btn.identify">📷 Identify from photo</button>
     <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
     <button class="ghost" onclick="openMachine()" data-i18n="btn.machine">⚙ Machine</button>
-    <button class="ghost" onclick="logMaintenance('clean')" data-i18n="btn.cleaned">🧽 Cleaned</button>
-    <button class="ghost" onclick="logMaintenance('descale')" data-i18n="btn.descaled">🧴 Descaled</button>
+    <button class="ghost" id="btn-clean" onclick="logMaintenance('clean')">🧽 Cleaned</button>
+    <button class="ghost" id="btn-descaled" onclick="logMaintenance('descale')">🧴 Descaled</button>
     <span class="empty" id="hint"></span>
   </div>
 
@@ -220,6 +225,19 @@ const thresholdOf = (c) => (c.threshold ?? 2);
 const isLow = (c) => c.count <= thresholdOf(c);
 const dayKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
 const daysAgo = (ts) => Math.floor((Date.now() - new Date(ts)) / 86400000);
+
+// Days until the next clean/descale, as shown on the toolbar buttons: not-yet-done is
+// "never", past-due shows how late, otherwise the days remaining (teal within 2 days).
+function maintCountdown(m) {
+  if (!m || !m.next) return { cls: "due", text: t("maint.neverShort") };
+  const ms = new Date(m.next) - Date.now();
+  if (ms <= 0) {
+    const late = Math.floor(-ms / 86400000);
+    return { cls: "due", text: late ? t("maint.overdue", { days: late }) : t("maint.dueShort") };
+  }
+  const days = Math.ceil(ms / 86400000);
+  return { cls: days <= 2 ? "soon" : "ok", text: t("maint.inDays", { days }) };
+}
 
 async function api(path, method = "GET", body) {
   const res = await fetch(path, {
@@ -349,6 +367,17 @@ function render() {
   }).join("");
 
   $("f-family").innerHTML = state.families.map((f) => `<option>${esc(f)}</option>`).join("");
+
+  // Upkeep countdown on the toolbar buttons, from the server's next-due timestamps.
+  for (const [id, task, label] of [["btn-clean", "clean", "btn.cleaned"], ["btn-descaled", "descale", "btn.descaled"]]) {
+    const m = state.maintenance.find((x) => x.task === task) || {};
+    const cd = maintCountdown(m);
+    const ago = m.last ? daysAgo(m.last) : null;
+    const el = $(id);
+    el.title = (ago == null ? t("maint.never") : t(ago === 1 ? "maint.lastDone1" : "maint.lastDone", { days: ago }))
+      + " · " + t("maint.every", { days: m.every_days });
+    el.innerHTML = esc(t(label)) + `<span class="cd ${cd.cls}">· ${esc(cd.text)}</span>`;
+  }
 
   $("grid").innerHTML = state.capsules.map((c) => `
     <div class="card" id="cap-${c.id}" draggable="true">

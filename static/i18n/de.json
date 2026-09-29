@@ -64,6 +64,10 @@
     "maint.lastDone1": "zuletzt vor 1 Tag",
     "maint.markDone": "{label} als erledigt markieren",
     "maint.every": "alle {days} Tage",
+    "maint.inDays": "{days} T",
+    "maint.dueShort": "fällig",
+    "maint.overdue": "{days} T überfällig",
+    "maint.neverShort": "nie",
 
     "card.addOne": "Eine hinzufügen",
     "card.removeOne": "Eine entfernen",

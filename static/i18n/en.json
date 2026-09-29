@@ -64,6 +64,10 @@
     "maint.lastDone1": "last done 1 day ago",
     "maint.markDone": "Mark {label} done",
     "maint.every": "every {days} days",
+    "maint.inDays": "{days}d",
+    "maint.dueShort": "due",
+    "maint.overdue": "{days}d late",
+    "maint.neverShort": "never",
 
     "card.addOne": "Add one",
     "card.removeOne": "Remove one",
