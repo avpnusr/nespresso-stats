@@ -21,7 +21,7 @@
     "dialog.add": "Add capsule",
     "dialog.edit": "Edit capsule",
     "field.name": "Capsule name",
-    "field.family": "Family",
+    "field.family": "Cup size",
     "field.photo": "Photo URL (optional)",
     "field.color": "Capsule colour",
     "field.intensity": "Intensity (0 = not set, 1–13)",
@@ -35,6 +35,7 @@
     "dialog.machine": "Machine",
     "field.machineName": "Name",
     "field.model": "Model",
+    "field.line": "Capsule system",
     "field.sleeve": "Sleeve size (one-tap restock amount)",
     "field.cleanEvery": "Clean every (days)",
     "field.descaleEvery": "Descale every (days)",
@@ -53,6 +54,7 @@
     "field.whichCapsule": "Which capsule was it?",
 
     "pending.brewed": "A {family} was just brewed — which one?",
+    "pending.brewedUnknown": "A coffee was just brewed — which capsule was it?",
     "pending.none": "No capsules of this family in your inventory.",
     "action.ignore": "Ignore",
 

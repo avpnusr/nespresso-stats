@@ -21,7 +21,7 @@
     "dialog.add": "Kapsel hinzufügen",
     "dialog.edit": "Kapsel bearbeiten",
     "field.name": "Kapselname",
-    "field.family": "Familie",
+    "field.family": "Tassengröße",
     "field.photo": "Foto-URL (optional)",
     "field.color": "Kapselfarbe",
     "field.intensity": "Intensität (0 = nicht gesetzt, 1–13)",
@@ -35,6 +35,7 @@
     "dialog.machine": "Maschine",
     "field.machineName": "Name",
     "field.model": "Modell",
+    "field.line": "Kapselsystem",
     "field.sleeve": "Sleeve-Größe (Menge für Ein-Tipp-Auffüllen)",
     "field.cleanEvery": "Reinigen alle (Tage)",
     "field.descaleEvery": "Entkalken alle (Tage)",
@@ -53,6 +54,7 @@
     "field.whichCapsule": "Welche Kapsel war es?",
 
     "pending.brewed": "Eine {family} wurde gerade gebrüht – welche war es?",
+    "pending.brewedUnknown": "Es wurde gerade ein Kaffee gebrüht – welche Kapsel war es?",
     "pending.none": "Keine Kapseln dieser Familie im Bestand.",
     "action.ignore": "Ignorieren",
 
