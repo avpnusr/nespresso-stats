@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nespresso Vertuo capsule inventory dashboard.
+"""Nespresso capsule inventory dashboard (Vertuo and Original Line).
 
 Stdlib only: http.server + sqlite3 + json. No dependencies, no build step.
 
@@ -32,7 +32,19 @@ INDEX = ROOT / "static" / "index.html"
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8787"))
 
-FAMILIES = ["Espresso", "Double Espresso", "Gran Lungo", "Mug", "Alto", "Carafe", "Alto XL"]
+# Capsule systems ("lines"). The machine is configured as exactly one of them, which decides
+# the cup sizes it brews, the capsules the dashboard shows, and what the hardware can report:
+# a Vertuo machine scans the pod's barcode, an Original Line machine cannot.
+FAMILIES = {
+    "vertuo": ["Espresso", "Double Espresso", "Gran Lungo", "Mug", "Alto", "Carafe", "Alto XL"],
+    "original": ["Ristretto", "Espresso", "Lungo"],
+}
+LINE_LABELS = {"vertuo": "Vertuo", "original": "Original"}
+DEFAULT_LINE = "vertuo"
+
+# Every pod prints its cup size, so those words can never identify one on their own (see the
+# single-word fallback in capsule_names_in): "ESPRESSO" alone is not the Festive Espresso.
+FAMILY_WORDS = {w for fams in FAMILIES.values() for f in fams for w in f.lower().split()}
 
 # Recurring upkeep: task -> (label, default interval in days). Cleaning every 10 days,
 # descaling roughly every 3 months. The interval is editable in the Machine dialog and
@@ -61,10 +73,35 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def normalize_family(value) -> str:
+# A bare "Lungo" is the Original Line's long cup (110 ml); Vertuo's long cup is a Gran Lungo,
+# which is what the shared alias resolves to. Without the override an Original machine would
+# report a cup size its line does not have.
+FAMILY_ALIASES_BY_LINE = {
+    "original": {"lungo": "Lungo", "espresso lungo": "Lungo",
+                 "café": "Espresso", "caffe": "Espresso"},
+}
+
+
+def valid_line(value) -> str:
+    return value if value in FAMILIES else DEFAULT_LINE
+
+
+def machine_line(conn) -> str:
+    """The configured capsule system. Every line-scoped decision reads it from here."""
+    return valid_line(get_setting(conn, "machine_line", DEFAULT_LINE))
+
+
+def entry_line(entry: dict) -> str:
+    """A catalogue entry's line; the Vertuo entries predate the field and have none."""
+    return valid_line(entry.get("line"))
+
+
+def normalize_family(value, line: str = DEFAULT_LINE) -> str:
     if value is None:
         return "Unknown"
-    return FAMILY_ALIASES.get(str(value).strip().lower(), str(value).strip().title())
+    key = str(value).strip().lower()
+    return (FAMILY_ALIASES_BY_LINE.get(line, {}).get(key) or FAMILY_ALIASES.get(key)
+            or str(value).strip().title())
 
 
 def connect(path=DB_PATH) -> sqlite3.Connection:
@@ -92,7 +129,8 @@ def init_db(conn: sqlite3.Connection, seed_path: Path = CATALOG) -> None:
             notes     TEXT NOT NULL DEFAULT '',
             price     REAL NOT NULL DEFAULT 0,
             threshold INTEGER NOT NULL DEFAULT 2,
-            intensity INTEGER NOT NULL DEFAULT 0
+            intensity INTEGER NOT NULL DEFAULT 0,
+            line      TEXT NOT NULL DEFAULT 'vertuo'
         );
         CREATE TABLE IF NOT EXISTS brews (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,14 +148,16 @@ def init_db(conn: sqlite3.Connection, seed_path: Path = CATALOG) -> None:
     )
     migrate(conn)
     for key, value in (("machine_name", "My Vertuo"), ("machine_model", "Vertuo"),
+                       ("machine_line", DEFAULT_LINE),
                        ("machine_image", ""), ("sleeve_size", "10")):
         conn.execute("INSERT OR IGNORE INTO settings VALUES (?, ?)", (key, value))
     if conn.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] == 0 and seed_path.exists():
         seed = json.loads(seed_path.read_text())
         conn.executemany(
-            "INSERT INTO capsules (name, family, color, image, intensity)"
-            " VALUES (:name, :family, :color, :image, :intensity)",
-            [{**c, "image": c.get("image", ""), "intensity": c.get("intensity", 0)} for c in seed],
+            "INSERT INTO capsules (name, family, color, image, intensity, special, line)"
+            " VALUES (:name, :family, :color, :image, :intensity, :special, :line)",
+            [{**c, "image": c.get("image", ""), "intensity": c.get("intensity", 0),
+              "special": 1 if c.get("special") else 0, "line": entry_line(c)} for c in seed],
         )
     conn.commit()
 
@@ -125,6 +165,10 @@ def init_db(conn: sqlite3.Connection, seed_path: Path = CATALOG) -> None:
 def migrate(conn: sqlite3.Connection) -> None:
     """Add columns introduced after the first release (old DBs)."""
     capsule_cols = {r[1] for r in conn.execute("PRAGMA table_info(capsules)")}
+    if "line" not in capsule_cols:
+        # Everything an older install holds was Vertuo (the only line back then) → default is
+        # the correct backfill; only the catalogue's new Original entries carry a line.
+        conn.execute("ALTER TABLE capsules ADD COLUMN line TEXT NOT NULL DEFAULT 'vertuo'")
     if "price" not in capsule_cols:
         conn.execute("ALTER TABLE capsules ADD COLUMN price REAL NOT NULL DEFAULT 0")
     if "threshold" not in capsule_cols:
@@ -164,20 +208,27 @@ def log_brew(conn, capsule_id, family, source, ts=None, delta=-1) -> int:
     return cur.lastrowid
 
 
-def brew_detected(conn, family, source="auto", capsule=None) -> dict:
+def brew_detected(conn, family, source="auto", capsule=None, line=None) -> dict:
     """A machine (or a Stream Deck key) reported a brew. An exact capsule name wins — a key
     knows which pod it was — otherwise fall back to `family`: decrement if unambiguous, else
-    queue it. The name is matched like a photo read, so 'Intenso' or a typo both work."""
+    queue it. The name is matched like a photo read, so 'Intenso' or a typo both work.
+    A family the machine's line doesn't have (an Original Line machine reports no cup size at
+    all) queues a pending without one, so the dashboard can offer the line's whole stock."""
+    line = valid_line(line or machine_line(conn))
     if capsule:
-        hit = match_capsule(conn, capsule)
+        hit = match_capsule(conn, capsule, line)
         if hit:  # known capsule name, no family guessing needed
             dec(conn, hit["id"])
             log_brew(conn, hit["id"], hit["family"], source)
             conn.commit()
             return {"action": "decremented", "family": hit["family"], "capsule": hit["name"]}
-    fam = normalize_family(family)
+    fam = normalize_family(family, line)
+    if fam not in FAMILIES[line]:
+        # No usable cup size — the machine (or the caller) told us nothing this line can brew.
+        return _queue_unknown(conn, line, source)
     rows = conn.execute(
-        "SELECT id, name, count FROM capsules WHERE lower(family) = lower(?) AND count > 0 ORDER BY name", (fam,)
+        "SELECT id, name, count FROM capsules WHERE line = ? AND lower(family) = lower(?)"
+        " AND count > 0 ORDER BY name", (line, fam)
     ).fetchall()
     if len(rows) == 1:
         dec(conn, rows[0]["id"])
@@ -188,10 +239,23 @@ def brew_detected(conn, family, source="auto", capsule=None) -> dict:
     conn.commit()
     if not rows:
         in_stock = conn.execute(
-            "SELECT COUNT(*) FROM capsules WHERE lower(family) = lower(?)", (fam,)
+            "SELECT COUNT(*) FROM capsules WHERE line = ? AND lower(family) = lower(?)", (line, fam)
         ).fetchone()[0]
         return {"action": "unknown" if not in_stock else "out-of-stock", "family": fam}
     return {"action": "pending", "family": fam, "candidates": [r["name"] for r in rows]}
+
+
+def _queue_unknown(conn, line: str, source: str) -> dict:
+    """A brew whose cup size we don't know (Original Line, or a family this line doesn't have).
+    Queue it without a family: the owner picks from everything in stock on that line."""
+    rows = conn.execute(
+        "SELECT name FROM capsules WHERE line = ? AND count > 0 ORDER BY name", (line,)
+    ).fetchall()
+    if not rows:
+        return {"action": "unknown", "family": None}
+    log_brew(conn, None, None, source)
+    conn.commit()
+    return {"action": "pending", "family": None, "candidates": [r["name"] for r in rows]}
 
 
 def resolve_pending(conn, capsule_id: int, brew_id: int | None = None) -> dict:
@@ -284,9 +348,12 @@ def color_distance(a: str, b: str) -> float:
     return ((2 + rbar / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rbar) / 256) * db * db) ** 0.5
 
 
-def rank_by_color(conn, color: str, limit: int = 8) -> list[dict]:
+def rank_by_color(conn, color: str, limit: int = 8, line: str | None = None) -> list[dict]:
+    """Closest capsule colours first. `line` (the machine's capsule system) keeps a Vertuo pod
+    out of an Original Line shortlist; None ranks across every line."""
     rows = [dict(r) for r in conn.execute(
         "SELECT id, name, family, color, image, count FROM capsules"
+        + (" WHERE line = ?" if line else ""), (line,) if line else ()
     )]
     for row in rows:
         row["distance"] = round(color_distance(color, row["color"]))
@@ -294,17 +361,18 @@ def rank_by_color(conn, color: str, limit: int = 8) -> list[dict]:
     return rows[:limit]
 
 
-def capsule_names_in(conn, text: str, rows=None) -> list[dict]:
+def capsule_names_in(conn, text: str, rows=None, line: str | None = None) -> list[dict]:
     """Capsules whose full name is readable in a transcription, longest name first. A partial
     read matches nothing — 'DOUBLE ESPRESSO' fits three flavours, 'DOUBLE ESPRESSO CHIARO' one.
     Tokens count wherever they appear, since a pod prints its name around the base twice and a
     transcription happily reads them out of order. Matching the transcription (not the model's
     answer) is what stops a shortlisted name being handed back as a 'read'. Pass `rows` to match
-    against the catalogue instead of the inventory."""
+    against the catalogue instead of the inventory, `line` to stay in one capsule system."""
     words = set(re.findall(r"[a-z0-9]+", (text or "").lower()))
     if rows is None:
         rows = [dict(r) for r in conn.execute(
-            "SELECT id, name, family, color, image, count FROM capsules")]
+            "SELECT id, name, family, color, image, count FROM capsules"
+            + (" WHERE line = ?" if line else ""), (line,) if line else ())]
     hits = []
     for row in rows:
         tokens = set(re.findall(r"[a-z0-9]+", row["name"].lower()))
@@ -317,28 +385,31 @@ def capsule_names_in(conn, text: str, rows=None) -> list[dict]:
     if hits or not words:
         return hits
     # No full name, but a one-word misread still resolves ('VOLTESO' → Voltesso) — only when
-    # every resolvable word points at the same capsule.
+    # every resolvable word points at the same capsule, and never on a cup-size word.
     found = {}
-    for word in words:
-        r = match_capsule(conn, word)
+    for word in words - FAMILY_WORDS:
+        r = match_capsule(conn, word, line)
         if r:
             found[r["id"]] = r
     return list(found.values()) if len(found) == 1 else []
 
 
-def match_capsule(conn, name: str) -> dict | None:
+def match_capsule(conn, name: str, line: str | None = None) -> dict | None:
     """Resolve a name read off a photo to a capsule. Small models misspell what they read and
     often only catch part of it ('CHIARO' for Double Espresso Chiaro), and a bottom-of-pod photo
     is silver, which shortlists the wrong capsules entirely — so match the printed name against
-    the whole catalogue. ponytail: difflib + a unique-token rule, no fuzzy scoring of our own."""
+    the whole catalogue. `line` restricts the search to the machine's system, so a Vertuo name
+    is never matched on an Original Line machine. ponytail: difflib + a unique-token rule, no
+    fuzzy scoring of our own."""
     rows = [dict(r) for r in conn.execute(
         "SELECT id, name, family, color, image, count FROM capsules"
+        + (" WHERE line = ?" if line else ""), (line,) if line else ()
     )]
     keys = {re.sub(r"[^a-z0-9]", "", r["name"].lower()): r for r in rows}
     names = {r["id"]: re.findall(r"[a-z0-9]+", r["name"].lower()) for r in rows}
     needle = re.sub(r"[^a-z0-9]", "", (name or "").lower())
-    if not needle:
-        return None
+    if not needle or needle in FAMILY_WORDS:
+        return None  # a bare cup size (“espresso”) names no capsule, it is printed on all of them
     if needle in keys:
         return keys[needle]
     # A partial read is only usable when exactly one name ends with it: 'CHIARO' → Double
@@ -354,17 +425,17 @@ def match_capsule(conn, name: str) -> dict | None:
     return None
 
 
-def vision_pick(image_data_url: str, candidates: list[dict]) -> dict | None:
-    """Ask an OpenAI-compatible vision model. Exact when the photo shows a printed name —
-    the capsule's underside (upside-down pod: name around the aluminium base next to the cup
-    size) or a sleeve/box. On a top-down photo of the bare dome it only refines colour."""
+def vision_pick(image_data_url: str, candidates: list[dict], line: str = DEFAULT_LINE) -> dict | None:
+    """Ask an OpenAI-compatible vision model. Exact when the photo shows a printed name — on a
+    capsule the name sits next to the cup size (Vertuo: around the aluminium base; Original: on
+    the top foil) or on a sleeve/box. On a top-down photo of the bare dome it only refines colour."""
     if not (VISION_BASE_URL and VISION_MODEL) or not image_data_url:
         return None
     names = [c["name"] for c in candidates]
     prompt = (
-        "This is a photo of a Nespresso Vertuo capsule or its packaging. An upside-down pod "
-        "prints the capsule name around the aluminium base next to the cup size, and sleeves and "
-        "boxes print it too. Transcribe every word you can actually read into 'text' — never "
+        f"This is a photo of a Nespresso {LINE_LABELS[line]} capsule or its packaging. The "
+        "capsule name is printed on the pod itself, next to the cup size, and on sleeves and "
+        "boxes. Transcribe every word you can actually read into 'text' — never "
         "complete a word you cannot read, and never copy a word from the list below. Then set "
         "'name' to the capsule name exactly as it appears in 'text'; only if the image shows no "
         "legible text at all, set 'name' to the closest colour match from this list (name one): " + ", ".join(names) +
@@ -408,29 +479,34 @@ def vision_pick(image_data_url: str, candidates: list[dict]) -> dict | None:
             "text": picked.get("text", "")}
 
 
-def identify(conn, color: str, image_data_url: str | None = None) -> dict:
-    candidates = rank_by_color(conn, color)
+def identify(conn, color: str, image_data_url: str | None = None, line: str | None = None) -> dict:
+    """Closest capsules to a photo. Everything here is scoped to the machine's capsule system:
+    an Original Line machine must never be offered a Vertuo pod."""
+    line = valid_line(line or machine_line(conn))
+    candidates = rank_by_color(conn, color, line=line)
     result = {"color": color, "candidates": candidates, "vision": None,
-              "vision_enabled": bool(VISION_BASE_URL and VISION_MODEL)}
+              "vision_enabled": bool(VISION_BASE_URL and VISION_MODEL),
+              "line": line}
     if image_data_url:
-        result["vision"] = vision_pick(image_data_url, candidates)
+        result["vision"] = vision_pick(image_data_url, candidates, line)
     vis = result["vision"]
     if vis and not vis.get("error"):
         text = (vis.get("text") or "").strip()
-        hits = capsule_names_in(conn, text) if text else []
+        hits = capsule_names_in(conn, text, line=line) if text else []
         if hits:  # a name read off the pod outranks the colour shortlist
             vis["name"] = hits[0]["name"]
             result["candidates"] = [hits[0]] + [c for c in candidates if c["id"] != hits[0]["id"]]
         elif text:
             # Legible, but no capsule by that name is in the inventory. If the catalogue knows it,
             # say so — the add dialog can prefill it from there — rather than fall back to colour.
-            cat = capsule_names_in(conn, text, rows=known_catalogue())
+            cat = capsule_names_in(conn, text, rows=[c for c in known_catalogue()
+                                                     if entry_line(c) == line])
             vis["name"] = cat[0]["name"] if cat else None
             vis["not_owned"] = bool(cat)
         elif vis.get("name"):
             # No text at all: the model's colour opinion is worth less than the colour ranking
             # the browser already did, so report it without reordering the candidates.
-            hit = match_capsule(conn, vis["name"])
+            hit = match_capsule(conn, vis["name"], line)
             if hit:
                 vis["name"] = hit["name"]
     return result
@@ -622,10 +698,14 @@ def known_catalogue(path=CATALOG) -> list[dict]:
 
 def current_state(conn) -> dict:
     machine = {r["key"]: r["value"] for r in conn.execute("SELECT * FROM settings")}
-    capsules = [dict(r) for r in conn.execute("SELECT * FROM capsules")]
-    # Known-but-not-inventoried capsules, for the "add capsule" picker.
-    owned = {c["name"].strip().lower() for c in capsules}
-    known = [c for c in known_catalogue() if c.get("name", "").strip().lower() not in owned]
+    # One machine at a time: only the configured line's capsules are the dashboard's business.
+    # Capsules of the other line stay in the db (switching back brings them right back).
+    line = valid_line(machine.get("machine_line"))
+    capsules = [dict(r) for r in conn.execute("SELECT * FROM capsules WHERE line = ?", (line,))]
+    # Known-but-not-inventoried capsules of this line, for the "add capsule" picker.
+    owned = {r["name"].strip().lower() for r in conn.execute("SELECT name FROM capsules")}
+    known = [c for c in known_catalogue()
+             if entry_line(c) == line and c.get("name", "").strip().lower() not in owned]
     # Manual drag order wins; anything unlisted (new capsule) keeps family/name order at the end.
     order = [int(x) for x in machine.get("capsule_order", "").split(",") if x]
     pos = {cid: i for i, cid in enumerate(order)}
@@ -641,7 +721,8 @@ def current_state(conn) -> dict:
     return {
         "capsules": capsules, "brews": brews, "pending": pending,
         "maintenance": maintenance_state(conn),
-        "machine": machine, "families": FAMILIES, "known": known,
+        "machine": machine, "families": FAMILIES[line], "known": known,
+        "lines": [{"key": k, "label": v} for k, v in LINE_LABELS.items()],
     }
 
 
@@ -766,6 +847,9 @@ class Handler(BaseHTTPRequestHandler):
                             "clean_days", "descale_days", "ntfy_url"):
                     if key in payload:
                         conn.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, payload[key]))
+                if "machine_line" in payload:  # an unknown line would empty the dashboard
+                    conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', ?)",
+                                 (valid_line(payload["machine_line"]),))
                 conn.commit()
                 self._send(200, {"ok": True})
             else:
@@ -795,11 +879,12 @@ class Handler(BaseHTTPRequestHandler):
                  "intensity": intensity, "special": special, "id": payload["id"]},
             )
         else:
+            # A new capsule belongs to the machine in use, so the dashboard keeps showing it.
             conn.execute(
-                """INSERT INTO capsules (name, family, color, image, notes, count, price, threshold, intensity, special)
-                   VALUES (:name, :family, :color, :image, :notes, :count, :price, :threshold, :intensity, :special)""",
+                """INSERT INTO capsules (name, family, color, image, notes, count, price, threshold, intensity, special, line)
+                   VALUES (:name, :family, :color, :image, :notes, :count, :price, :threshold, :intensity, :special, :line)""",
                 {**fields, "count": count, "price": price, "threshold": threshold,
-                 "intensity": intensity, "special": special},
+                 "intensity": intensity, "special": special, "line": machine_line(conn)},
             )
         conn.commit()
         self._send(200, {"ok": True})
@@ -843,11 +928,17 @@ def selftest() -> None:
         conn = connect(Path(tmp) / "t.db")
         init_db(conn, CATALOG)
         assert conn.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] > 0
+        # every catalogue photo the dashboard points at actually ships with the repo
+        for entry in known_catalogue():
+            image = entry.get("image", "")
+            if image.startswith("/static/"):
+                assert (ROOT / image.lstrip("/")).exists(), f"missing catalogue image {image}"
 
         # known-capsule picker: a fully seeded inventory has nothing left to offer
         assert current_state(conn)["known"] == []
         other = conn.execute(
-            "SELECT id, name, color FROM capsules WHERE name NOT IN ('Fortado','Melozio','Intenso') LIMIT 1"
+            "SELECT id, name, color FROM capsules WHERE line='vertuo' AND name NOT IN"
+            " ('Fortado','Melozio','Intenso') LIMIT 1"
         ).fetchone()
         conn.execute("DELETE FROM capsules WHERE id=?", (other["id"],))
         known = current_state(conn)["known"]
@@ -983,7 +1074,7 @@ def selftest() -> None:
         assert conn.execute("SELECT intensity FROM capsules WHERE name='Melozio'").fetchone()[0] == 6
 
         # manual drag order persists and wins over family/name ordering
-        ids = [r[0] for r in conn.execute("SELECT id FROM capsules")]
+        ids = [r[0] for r in conn.execute("SELECT id FROM capsules WHERE line='vertuo'")]
         set_capsule_order(conn, list(reversed(ids)))
         assert [c["id"] for c in current_state(conn)["capsules"]] == list(reversed(ids))
 
@@ -1049,6 +1140,62 @@ def selftest() -> None:
         migrate(old)
         assert old.execute("SELECT intensity FROM capsules WHERE name='Melozio'").fetchone()[0] == 6
         assert old.execute("SELECT special FROM capsules WHERE name='Melozio'").fetchone()[0] == 0
+        # an original-line db gains the column with the line it was
+        assert old.execute("SELECT line FROM capsules WHERE name='Melozio'").fetchone()[0] == "vertuo"
+
+        # Original Line: the machine reads no barcode, so a brew arrives without a cup size and
+        # is queued for the owner. Families, capsules, picker and identify follow the set line.
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'original')")
+        st = current_state(conn)
+        assert st["families"] == ["Ristretto", "Espresso", "Lungo"], st["families"]
+        assert [l["key"] for l in st["lines"]] == ["vertuo", "original"], st["lines"]
+        assert st["capsules"] and all(c["line"] == "original" for c in st["capsules"])
+        # the picker offers this line's missing capsules only — an un-owned Vertuo capsule from the
+        # catalogue must not appear next to them
+        victim = conn.execute(
+            "SELECT name FROM capsules WHERE line='original' ORDER BY name LIMIT 1").fetchone()
+        other_line = conn.execute(
+            "SELECT name FROM capsules WHERE line='vertuo' ORDER BY name LIMIT 1").fetchone()
+        conn.execute("DELETE FROM capsules WHERE name = ?", (victim["name"],))
+        conn.execute("DELETE FROM capsules WHERE name = ?", (other_line["name"],))
+        assert [k["name"] for k in current_state(conn)["known"]] == [victim["name"]], "picker offered another line"
+        # 'Lungo' is this line's long cup — not Vertuo's Gran Lungo, and neither is a Vertuo pod here
+        assert normalize_family("Lungo", "original") == "Lungo"
+        assert normalize_family("lungo", "vertuo") == "Gran Lungo"
+        assert match_capsule(conn, "Melozio", "original") is None
+        assert match_capsule(conn, "Melozio", "vertuo")["name"] == "Melozio"
+        # "ESPRESSO" is what every pod prints as its cup size, never a capsule name of its own
+        assert match_capsule(conn, "Espresso", "original") is None
+        assert capsule_names_in(conn, "ESPRESSO 40 ML", line="original") == []
+        assert capsule_names_in(conn, "FESTIVE ESPRESSO 40 ML", line="original")[0]["name"] == "Festive Espresso"
+
+        # nothing in stock → unknown, and no pointless banner
+        conn.execute("UPDATE capsules SET count = 0 WHERE line = 'original'")
+        assert brew_detected(conn, None)["action"] == "unknown"
+        first = conn.execute(
+            "SELECT id, name FROM capsules WHERE line='original' ORDER BY name LIMIT 1").fetchone()
+        conn.execute("UPDATE capsules SET count = 5, color = '#123456' WHERE id = ?", (first["id"],))
+        res = brew_detected(conn, None)
+        assert res["action"] == "pending" and res["family"] is None, res
+        assert res["candidates"] == [first["name"]], res
+        assert current_state(conn)["pending"][-1]["family"] is None
+        resolve_pending(conn, first["id"])
+        assert conn.execute("SELECT count FROM capsules WHERE id=?", (first["id"],)).fetchone()[0] == 4
+
+        # a family this line does not have (a Vertuo cup size) is queued, not out-of-stock
+        res = brew_detected(conn, "Gran Lungo")
+        assert res["action"] == "pending" and res["family"] is None, res
+        dismiss_pending(conn, current_state(conn)["pending"][-1]["id"])
+        # identify only ever proposes capsules of the machine's line
+        ranked = identify(conn, "#123456")
+        assert ranked["line"] == "original" and ranked["candidates"][0]["id"] == first["id"], ranked
+
+        # a new capsule is stamped with the line in use, so it stays visible
+        h = Handler.__new__(Handler)  # only the db half of the request handler is under test
+        h._send = lambda *a, **k: None
+        h._upsert_capsule(conn, {"name": "Test Kapsel", "family": "Lungo", "count": 1})
+        assert conn.execute("SELECT line FROM capsules WHERE name='Test Kapsel'").fetchone()[0] \
+            == "original"
     print("selftest ok")
 
 

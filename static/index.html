@@ -185,6 +185,7 @@
     <h3 data-i18n="dialog.machine">Machine</h3>
     <label data-i18n="field.machineName">Name</label><input id="m-name">
     <label data-i18n="field.model">Model</label><input id="m-model">
+    <label data-i18n="field.line">Capsule system</label><select id="m-line" onchange="lineChanged(this)"></select>
     <label data-i18n="field.photo">Photo URL (optional)</label><input id="m-image" placeholder="https://…">
     <label data-i18n="field.sleeve">Sleeve size (one-tap restock amount)</label><input id="m-sleeve" type="number" min="1" value="10">
     <label data-i18n="field.cleanEvery">Clean every (days)</label><input id="m-clean" type="number" min="1" value="10">
@@ -215,7 +216,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let state = { capsules: [], brews: [], pending: [], maintenance: [], machine: {}, families: [] };
+let state = { capsules: [], brews: [], pending: [], maintenance: [], machine: {}, families: [], lines: [] };
 let stats = [];
 
 const MAINT = { clean: { icon: "🧽" }, descale: { icon: "🧴" } };
@@ -345,8 +346,11 @@ function render() {
   $("s-low").textContent = state.capsules.filter(isLow).length;
 
   $("pending").innerHTML = state.pending.map((p) => {
-    const options = state.capsules.filter((c) => c.family === p.family && c.count > 0);
-    return `<div class="pending"><h3>☕ ${esc(t("pending.brewed", { family: p.family }))}</h3>
+    // Without a family (Original Line machines report no cup size) every capsule in stock is a
+    // candidate — the whole line's shelf is the shortlist.
+    const options = state.capsules.filter((c) => (!p.family || c.family === p.family) && c.count > 0);
+    const title = p.family ? t("pending.brewed", { family: p.family }) : t("pending.brewedUnknown");
+    return `<div class="pending"><h3>☕ ${esc(title)}</h3>
       <div class="row">
         ${options.map((c) => `<button onclick="resolve(${c.id},${p.id})">${esc(c.name)}</button>`).join("")}
         ${options.length ? "" : `<span class="empty">${esc(t("pending.none"))}</span>`}
@@ -593,6 +597,7 @@ $("f-known").addEventListener("change", (e) => {
   $("f-color").value = k.color || "#6b4f3a";
   $("f-image").value = k.image || "";
   $("f-intensity").value = k.intensity ?? 0;
+  $("f-special").checked = !!k.special;  // a limited edition stays one when added from the catalogue
 });
 $("editor-form").addEventListener("submit", async (e) => {
   if (e.submitter?.value !== "save") return;
@@ -711,9 +716,18 @@ function addKnown(i) {
   $("f-count").focus();
 }
 
+// The model field starts out as the line's brand name ("My Vertuo"), so switching the capsule
+// system carries it over instead of leaving the header announcing the old machine.
+function lineChanged(sel) {
+  const label = sel.options[sel.selectedIndex].text;
+  if (state.lines.some((l) => l.label === $("m-model").value)) $("m-model").value = label;
+}
+
 function openMachine() {
   $("m-name").value = state.machine.machine_name || "";
   $("m-model").value = state.machine.machine_model || "";
+  $("m-line").innerHTML = state.lines.map((l) => `<option value="${esc(l.key)}">${esc(l.label)}</option>`).join("");
+  $("m-line").value = state.machine.machine_line || "vertuo";
   $("m-image").value = state.machine.machine_image || "";
   $("m-sleeve").value = sleeveSize();
   $("m-clean").value = (state.maintenance.find((m) => m.task === "clean") || {}).every_days || 10;
@@ -727,6 +741,7 @@ $("machine-form").addEventListener("submit", async (e) => {
   await api("/api/settings", "POST", {
     machine_name: $("m-name").value, machine_model: $("m-model").value,
     machine_image: $("m-image").value,
+    machine_line: $("m-line").value,
     sleeve_size: parseInt($("m-sleeve").value, 10) || 10,
     clean_days: parseInt($("m-clean").value, 10) || 10,
     descale_days: parseInt($("m-descale").value, 10) || 90,

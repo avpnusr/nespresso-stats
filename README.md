@@ -6,9 +6,9 @@
 > the repo (capsule photos, artwork, favicons and the machine render) are
 > AI-generated too; they are not official Nespresso assets.
 
-A self-hosted dashboard for your Nespresso Vertuo capsule inventory: what
-you have, how many of each, brew history, and optional auto-decrement when
-the machine brews a coffee.
+A self-hosted dashboard for your Nespresso capsule inventory — Vertuo and
+Original Line: what you have, how many of each, brew history, and optional
+auto-decrement when the machine brews a coffee.
 
 No dependencies — Python 3 standard library only.
 
@@ -60,7 +60,7 @@ Set them to match your host; `./data` is chowned to match on start.
 ![The Nespresso Stats dashboard: capsule tiles with counts, prices and an intensity
 scale, plus the coffee stats and recent activity lists](screenshot.png)
 
-- Capsule cards grouped by family, each with the capsule's photo
+- Capsule cards grouped by cup size, each with the capsule's photo
   (or your own photo URL; falls back to a drawn SVG if none), count,
   `+` / `−` buttons; drag a tile to reorder them.
 - `+` / `−` adjust stock; **Brew** lowers stock by 1 and logs a brew.
@@ -79,8 +79,9 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
 - Add / edit / delete capsules, optionally prefilled from the known-capsule
   catalogue (`capsules.json`), with optional price per capsule and a 1–13 intensity
   shown as a scale on each tile.
-- Mark limited editions (★ badge), set your machine name, model, photo and sleeve
-  size (the one-tap restock amount), and pick a theme (auto / dark / light).
+- Mark limited editions (★ badge), set your machine name, model, photo, capsule
+  system and sleeve size (the one-tap restock amount), and pick a theme
+  (auto / dark / light).
 - **Backup**: export the full database as JSON from the Machine dialog, and restore
   it back (replaces all current data).
 - **Push notifications** (optional): set an [ntfy](https://ntfy.sh) topic URL — public
@@ -88,6 +89,41 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
   stock or upkeep changes, the server pushes “running low” and “cleaning/descaling due”
   reminders, at most once per episode (restocking or logging the task re-arms them).
   Works even if nobody opens the dashboard; it also catches up at startup.
+
+## Vertuo or Original Line
+
+The dashboard runs **one machine at a time**. Pick its capsule system under
+**⚙ Machine → Capsule system**:
+
+| | Vertuo | Original Line |
+| --- | --- | --- |
+| Cup sizes | Espresso, Double Espresso, Gran Lungo, Mug, Alto, Carafe, Alto XL | Ristretto, Espresso, Lungo |
+| Capsules shown | the 47 Vertuo entries in `capsules.json` | the 29 Original entries |
+| Identify from photo | only Vertuo matches | only Original matches |
+| Auto-decrement | cup size from the barcode, so the pod is narrowed down | never a cup size — a detected brew is queued as *which capsule was it?* |
+
+The choice scopes the tiles, the cup-size dropdown, the known-capsule picker and
+the photo identification. Capsules of the other line stay in the database and
+come back when you switch back — so a new capsule should be added while its line
+is selected, and it is stamped with that line. An existing install keeps its
+Vertuo inventory and finds the Original capsules in the **Known capsule** picker
+(the one-shot seed never touches a populated database).
+
+The Original entries cover the standard range (Ristretto / Espresso / Lungo),
+the **Master Origins** single origins and a snapshot of the current **limited
+editions** (seeded with the ★ badge; seasons come and go, so delete the ones that
+are gone and add the new ones from the picker).
+
+**Why Original Line detection is coarser:** a Vertuo machine scans the pod's
+barcode and reports a cup size (`lastCoffeeFamilyID`), an Original machine has no
+barcode and reports at most *that* it is brewing. Its brew therefore arrives
+without a cup size, and every in-stock capsule of that line is offered in the
+pending banner.
+
+The cup-size colours for the Original entries in `capsules.json` are eyeballed
+from product photos, not sampled from a real pod — no capsule photos ship for
+that line yet. Identification by colour is only as good as those values, so swap
+in sampled ones when you add photos.
 
 ### Stream Deck
 
@@ -106,12 +142,13 @@ phone camera). It works in two stages:
    that colour shortlist** and asked to pick one — much easier than picking
    from the whole catalogue.
 
-**What decides the result is the photo, not the model.** An upside-down pod
-prints its name and cup size around the aluminium base (`VOLTESSO` ·
-`ESPRESSO` · `40 ml`), and sleeves, boxes and product shots print it too — so
-photograph the **underside**, the sleeve or the box. With the name in the
-frame, all the model has to do is transcribe what it can see, which is the easy
-end of the job and exactly what the small default model is for.
+**What decides the result is the photo, not the model.** A Vertuo pod prints its
+name and cup size around the aluminium base (`VOLTESSO` · `ESPRESSO` · `40 ml`),
+an Original capsule prints them on the top foil, and sleeves, boxes and product
+shots print them too — so photograph the **marked side**, the sleeve or the box.
+With the name in the frame, all the model has to do is transcribe what it can
+see, which is the easy end of the job and exactly what the small default model
+is for.
 
 **A top-down photo of the bare dome is the hard case: no text at all.** There
 the model can only vote on colour, and that is where even the large cloud models
@@ -121,7 +158,8 @@ colour shortlist, but treat it as a guess. If you want identify to work without
 fiddling, shoot the underside, not the top.
 
 Colour ranking is only as good as the stored colours, so the seed colours in
-`capsules.json` were sampled from the capsule photos, not guessed.
+`capsules.json` were sampled from the capsule photos, not guessed (the Original
+Line entries are the one exception — see above).
 
 ### Benchmarked on real capsule photos
 
@@ -184,7 +222,10 @@ interfaces exposes that decoded code.
 | **Smart plug power monitoring** | That a brew started, by power signature | A metered plug |
 
 The cloud `lastCoffeeFamilyID` maps to: `1` Espresso, `2` Double Espresso,
-`3` Gran Lungo, `4` Mug, `5` Alto, `6` Carafe, `7` Alto XL.
+`3` Gran Lungo, `4` Mug, `5` Alto, `6` Carafe, `7` Alto XL. It is a Vertuo value — an
+Original Line machine has no barcode reader and reports no cup size at all, so with
+that system selected a detected brew is queued as a familyless pending (see
+[Vertuo or Original Line](#vertuo-or-original-line)).
 
 Existing Home Assistant integrations already solve the machine connection —
 use one of these and don't reimplement it:

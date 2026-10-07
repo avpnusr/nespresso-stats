@@ -21,7 +21,7 @@
     "dialog.add": "Ajouter une capsule",
     "dialog.edit": "Modifier la capsule",
     "field.name": "Nom de la capsule",
-    "field.family": "Famille",
+    "field.family": "Taille de tasse",
     "field.photo": "URL de la photo (facultatif)",
     "field.color": "Couleur de la capsule",
     "field.intensity": "Intensité (0 = non définie, 1–13)",
@@ -35,6 +35,7 @@
     "dialog.machine": "Machine",
     "field.machineName": "Nom",
     "field.model": "Modèle",
+    "field.line": "Système de capsules",
     "field.sleeve": "Taille du coffret (quantité réapprovisionnée en un clic)",
     "field.cleanEvery": "Nettoyer tous les (jours)",
     "field.descaleEvery": "Détartrer tous les (jours)",
@@ -53,6 +54,7 @@
     "field.whichCapsule": "De quelle capsule s'agissait-il ?",
 
     "pending.brewed": "Une {family} vient d'être préparée — laquelle ?",
+    "pending.brewedUnknown": "Un café vient d'être préparé — quelle capsule ?",
     "pending.none": "Aucune capsule de cette famille dans votre stock.",
     "action.ignore": "Ignorer",
 

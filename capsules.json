@@ -327,5 +327,240 @@
     "color": "#39413d",
     "image": "/static/capsules/togetherness-blend.png",
     "intensity": 7
+  },
+  {
+    "name": "Ispirazione Ristretto Italiano",
+    "family": "Ristretto",
+    "color": "#2a2a2a",
+    "image": "/static/capsules/ispirazione-ristretto-italiano.png",
+    "intensity": 10,
+    "line": "original"
+  },
+  {
+    "name": "Ispirazione Ristretto Decaffeinato",
+    "family": "Ristretto",
+    "color": "#3d3a37",
+    "image": "/static/capsules/ispirazione-ristretto-decaffeinato.png",
+    "intensity": 10,
+    "line": "original"
+  },
+  {
+    "name": "Ispirazione Napoli",
+    "family": "Ristretto",
+    "color": "#171310",
+    "image": "/static/capsules/ispirazione-napoli.png",
+    "intensity": 13,
+    "line": "original"
+  },
+  {
+    "name": "Ispirazione Palermo Kazaar",
+    "family": "Ristretto",
+    "color": "#241a12",
+    "image": "/static/capsules/ispirazione-palermo-kazaar.png",
+    "intensity": 12,
+    "line": "original"
+  },
+  {
+    "name": "Ispirazione Venezia",
+    "family": "Ristretto",
+    "color": "#5b4530",
+    "image": "/static/capsules/ispirazione-venezia.png",
+    "intensity": 8,
+    "line": "original"
+  },
+  {
+    "name": "Ispirazione Istanbul",
+    "family": "Ristretto",
+    "color": "#6d4a2c",
+    "image": "/static/capsules/ispirazione-istanbul.png",
+    "intensity": 8,
+    "line": "original"
+  },
+  {
+    "name": "Ispirazione Firenze Arpeggio",
+    "family": "Espresso",
+    "color": "#4a3125",
+    "image": "/static/capsules/ispirazione-firenze-arpeggio.png",
+    "intensity": 9,
+    "line": "original"
+  },
+  {
+    "name": "Arpeggio Decaffeinato",
+    "family": "Espresso",
+    "color": "#5e4436",
+    "image": "/static/capsules/arpeggio-decaffeinato.png",
+    "intensity": 9,
+    "line": "original"
+  },
+  {
+    "name": "Ispirazione Roma",
+    "family": "Espresso",
+    "color": "#71482a",
+    "image": "/static/capsules/ispirazione-roma.png",
+    "intensity": 8,
+    "line": "original"
+  },
+  {
+    "name": "Ispirazione Genova Livanto",
+    "family": "Espresso",
+    "color": "#8a5a2b",
+    "image": "/static/capsules/ispirazione-genova-livanto.png",
+    "intensity": 6,
+    "line": "original"
+  },
+  {
+    "name": "Capriccio",
+    "family": "Espresso",
+    "color": "#7d5a3c",
+    "image": "/static/capsules/capriccio.png",
+    "intensity": 5,
+    "line": "original"
+  },
+  {
+    "name": "Volluto",
+    "family": "Espresso",
+    "color": "#c9a227",
+    "image": "/static/capsules/volluto.png",
+    "intensity": 4,
+    "line": "original"
+  },
+  {
+    "name": "Cosi",
+    "family": "Espresso",
+    "color": "#84b0a8",
+    "image": "/static/capsules/cosi.png",
+    "intensity": 4,
+    "line": "original"
+  },
+  {
+    "name": "Decaffeinato Volluto",
+    "family": "Espresso",
+    "color": "#cbb069",
+    "image": "/static/capsules/decaffeinato-volluto.png",
+    "intensity": 4,
+    "line": "original"
+  },
+  {
+    "name": "Vienna Linizio Lungo",
+    "family": "Lungo",
+    "color": "#c9971f",
+    "image": "/static/capsules/vienna-linizio-lungo.png",
+    "intensity": 4,
+    "line": "original"
+  },
+  {
+    "name": "Tokyo Vivalto Lungo",
+    "family": "Lungo",
+    "color": "#356f8e",
+    "image": "/static/capsules/tokyo-vivalto-lungo.png",
+    "intensity": 6,
+    "line": "original"
+  },
+  {
+    "name": "Stockholm Fortissio Lungo",
+    "family": "Lungo",
+    "color": "#3c6b45",
+    "image": "/static/capsules/stockholm-fortissio-lungo.png",
+    "intensity": 8,
+    "line": "original"
+  },
+  {
+    "name": "Cape Town Envivo Lungo",
+    "family": "Lungo",
+    "color": "#93372b",
+    "image": "/static/capsules/cape-town-envivo-lungo.png",
+    "intensity": 10,
+    "line": "original"
+  },
+  {
+    "name": "Buenos Aires Lungo",
+    "family": "Lungo",
+    "color": "#cf8a3a",
+    "image": "/static/capsules/buenos-aires-lungo.png",
+    "intensity": 4,
+    "line": "original"
+  },
+  {
+    "name": "Shanghai Lungo",
+    "family": "Lungo",
+    "color": "#a9563a",
+    "image": "/static/capsules/shanghai-lungo.png",
+    "intensity": 5,
+    "line": "original"
+  },
+  {
+    "name": "Master Origins Colombia",
+    "family": "Espresso",
+    "color": "#8e2b2b",
+    "image": "/static/capsules/master-origins-colombia.png",
+    "intensity": 6,
+    "line": "original"
+  },
+  {
+    "name": "Master Origins Ethiopia",
+    "family": "Espresso",
+    "color": "#6f4b8f",
+    "image": "/static/capsules/master-origins-ethiopia.png",
+    "intensity": 4,
+    "line": "original"
+  },
+  {
+    "name": "Master Origins India",
+    "family": "Espresso",
+    "color": "#4b5f2a",
+    "image": "/static/capsules/master-origins-india.png",
+    "intensity": 11,
+    "line": "original"
+  },
+  {
+    "name": "Master Origins Indonesia",
+    "family": "Espresso",
+    "color": "#4a3526",
+    "image": "/static/capsules/master-origins-indonesia.png",
+    "intensity": 8,
+    "line": "original"
+  },
+  {
+    "name": "Master Origins Nicaragua",
+    "family": "Espresso",
+    "color": "#1f6f6b",
+    "image": "/static/capsules/master-origins-nicaragua.png",
+    "intensity": 5,
+    "line": "original"
+  },
+  {
+    "name": "Master Origins Kahawa ya Congo",
+    "family": "Espresso",
+    "color": "#a05a1e",
+    "image": "/static/capsules/master-origins-kahawa-ya-congo.png",
+    "intensity": 7,
+    "line": "original"
+  },
+  {
+    "name": "Festive Espresso",
+    "family": "Espresso",
+    "color": "#7a1f2b",
+    "image": "/static/capsules/festive-espresso.png",
+    "intensity": 0,
+    "line": "original",
+    "special": true
+  },
+  {
+    "name": "Almond Hibiskus",
+    "family": "Espresso",
+    "color": "#c2568a",
+    "image": "/static/capsules/almond-hibiskus.png",
+    "intensity": 0,
+    "line": "original",
+    "special": true
+  },
+  {
+    "name": "Cinnamon Tamarind",
+    "family": "Espresso",
+    "color": "#a45a24",
+    "image": "/static/capsules/cinnamon-tamarind.png",
+    "intensity": 0,
+    "line": "original",
+    "special": true
   }
 ]
