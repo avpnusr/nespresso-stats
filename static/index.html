@@ -7,6 +7,8 @@
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
 <link rel="apple-touch-icon" href="/static/favicon-180.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#14100d">
 <style>
   :root, html[data-theme="dark"] {
     --bg: #14100d; --panel: #1f1813; --panel-2: #291f18; --line: #3a2c22;
@@ -285,6 +287,8 @@ function applyTheme() {
   const saved = localStorage.getItem("theme") || "auto";
   document.documentElement.dataset.theme =
     saved === "auto" ? (prefersLight.matches ? "light" : "dark") : saved;
+  document.querySelector('meta[name="theme-color"]').content =
+    document.documentElement.dataset.theme === "light" ? "#f4efe7" : "#14100d";
   $("theme-select").value = saved;
 }
 function setTheme(value) { localStorage.setItem("theme", value); applyTheme(); }
@@ -421,9 +425,12 @@ function renderStats() {
     .reduce((s, b) => s + (priceOf[b.capsule_id] || 0), 0);
 
   const tile = (v, label) => `<div class="stat"><b>${esc(v)}</b><span>${esc(label)}</span></div>`;
+  const stock = state.capsules.reduce((s, c) => s + c.count, 0);
+  const allDays = avg > 0 ? Math.floor(stock / avg) : null;
   $("kpis").innerHTML =
     tile(today, t("kpi.today")) + tile(week, t("kpi.week")) +
-    tile(avg.toFixed(1), t("kpi.avg")) + tile("€" + spend.toFixed(2), t("kpi.month"));
+    tile(avg.toFixed(1), t("kpi.avg")) + tile("€" + spend.toFixed(2), t("kpi.month")) +
+    tile(allDays != null ? "~" + allDays + "d" : "—", t("kpi.empty"));
 
   const low = state.capsules.filter(isLow);
   const daysLeft = (c) => {
@@ -436,6 +443,7 @@ function renderStats() {
         const delta = Math.max(0, sleeveSize() - c.count);
         return `<button onclick="restock(${c.id})" ${delta ? "" : "disabled"}>${esc(c.name)} · ${c.count}${dl != null ? ` · ${esc(t("low.daysLeft", { days: dl }))}` : ""}${delta ? ` → ${sleeveSize()}` : ""}</button>`;
       }).join("")
+      + `<button class="ghost" onclick="copyOrder()">${esc(t("low.order"))}</button>`
     : "";
 
   const bars = (rows) => {
@@ -454,6 +462,32 @@ function renderStats() {
     `<div class="sub">${esc(t("trends.weeks"))}</div>${heatmap(brews)}` +
     `<div class="sub">${esc(t("trends.most"))}</div>${bars(rank((b) => nameOf(b.capsule_id)))}` +
     `<div class="sub">${esc(t("trends.byFamily"))}</div>${bars(rank((b) => (state.capsules.find((c) => c.id === b.capsule_id) || {}).family))}`;
+}
+
+// Clipboard API needs a secure context; over plain-HTTP LAN falls back to execCommand.
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  document.body.append(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  return ok ? Promise.resolve() : Promise.reject(new Error("copy failed"));
+}
+
+function copyOrder() {
+  const rows = state.capsules.filter(isLow).map((c) => {
+    const need = Math.max(0, sleeveSize() - c.count);
+    return { c, need, cost: need * (c.price || 0) };
+  });
+  const total = rows.reduce((s, r) => s + r.cost, 0);
+  const text = [
+    t("order.title", { name: state.machine.machine_name || t("header.subtitle") }),
+    ...rows.map((r) => t("order.line", { name: r.c.name, count: r.c.count, need: r.need, cost: r.cost.toFixed(2) })),
+    t("order.total", { total: total.toFixed(2) }),
+  ].join("\n");
+  copyText(text).then(() => hint(t("order.copied")), () => hint(t("order.failed")));
 }
 
 function heatmap(brews) {
