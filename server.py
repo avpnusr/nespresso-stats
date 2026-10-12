@@ -25,6 +25,8 @@ from socketserver import TCPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+mimetypes.add_type("application/manifest+json", ".webmanifest")  # Alpine's mime db lacks it
+
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("NESPRESSO_DB", ROOT / "data" / "nespresso.db"))
 CATALOG = ROOT / "capsules.json"

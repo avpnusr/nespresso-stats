@@ -83,9 +83,16 @@
     "kpi.week": "letzte 7 Tage",
     "kpi.avg": "Ø / Tag",
     "kpi.month": "diesen Monat",
+    "kpi.empty": "Tage übrig",
 
     "low.title": "Wird knapp",
     "low.daysLeft": "~{days} T. übrig",
+    "low.order": "🛒 Bestellliste kopieren",
+    "order.title": "{name} — nachzubestellende Kapseln",
+    "order.line": "{name}: {need} nachbestellen ({count} vorrätig) — {cost} €",
+    "order.total": "Gesamt: {total} €",
+    "order.copied": "Bestellliste in die Zwischenablage kopiert.",
+    "order.failed": "Kopieren fehlgeschlagen — bitte manuell markieren und kopieren.",
 
     "trends.weeks": "Letzte 12 Wochen",
     "trends.most": "Am häufigsten gebrüht",

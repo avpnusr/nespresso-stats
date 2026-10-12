@@ -83,9 +83,16 @@
     "kpi.week": "7 derniers jours",
     "kpi.avg": "moy. / jour",
     "kpi.month": "ce mois-ci",
+    "kpi.empty": "jours restants",
 
     "low.title": "Bientôt épuisées",
     "low.daysLeft": "~{days} j restants",
+    "low.order": "🛒 Copier la liste de commande",
+    "order.title": "{name} — capsules à recommander",
+    "order.line": "{name} : {need} de plus ({count} en stock) — {cost} €",
+    "order.total": "Total : {total} €",
+    "order.copied": "Liste de commande copiée dans le presse-papiers.",
+    "order.failed": "Copie impossible — veuillez sélectionner et copier manuellement.",
 
     "trends.weeks": "12 dernières semaines",
     "trends.most": "Les plus préparées",

@@ -66,9 +66,10 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
 - `+` / `−` adjust stock; **Brew** lowers stock by 1 and logs a brew.
 - **Coffee stats**: brewed today / last 7 days, average per day, spend this
   month, a 12-week heatmap, most-brewed and per-family breakdowns, plus a
-  burn-rate “~N days left” forecast.
+  burn-rate “~N days left” forecast for each capsule and for your whole stock.
 - **Running low** list (per-capsule threshold) with one-tap restock to your
-  sleeve size.
+  sleeve size, and **🛒 Copy order list** — the reorder amounts, prices and
+  total as clipboard text.
 - **Recent activity** lists brews and restocks; undo any entry or reassign a
   brew's capsule.
 - **Upkeep reminders** for cleaning (default every 10 days) and descaling
@@ -84,6 +85,9 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
   (auto / dark / light).
 - **Backup**: export the full database as JSON from the Machine dialog, and restore
   it back (replaces all current data).
+- **Installable (PWA)**: a web app manifest and icons let your browser add the
+  dashboard to your phone's home screen and open it full-screen. No service
+  worker — it still needs the server, online.
 - **Push notifications** (optional): set an [ntfy](https://ntfy.sh) topic URL — public
   ntfy.sh or self-hosted — in the Machine dialog and test it with *Send test*. Whenever
   stock or upkeep changes, the server pushes “running low” and “cleaning/descaling due”
@@ -341,6 +345,7 @@ and reads its `language` field — drop the file in and it appears.
 - `Dockerfile`, `docker-compose.yml`, `entrypoint.sh` — container image, compose
   service, and the `PUID`/`PGID` drop-privileges wrapper.
 - `static/index.html` — the dashboard (vanilla HTML/CSS/JS, no build).
+- `static/manifest.webmanifest`, `static/icon-*.png` — PWA manifest and home-screen icons.
 - `static/i18n/*.json` — UI translations (one file per language, self-labelled).
 - `screenshot.png` — the dashboard picture above.
 - `capsules.json` — starter catalogue of the capsules you own (name, family,
