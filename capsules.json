@@ -1,6 +1,7 @@
 [
   {
     "name": "Melozio",
+    "sku": "7005.20",
     "family": "Mug",
     "color": "#a16730",
     "image": "/static/capsules/melozio.png",
@@ -8,6 +9,7 @@
   },
   {
     "name": "Intenso",
+    "sku": "7042.20",
     "family": "Mug",
     "color": "#573525",
     "image": "/static/capsules/intenso.png",
@@ -15,6 +17,7 @@
   },
   {
     "name": "Mexico",
+    "sku": "7026.20",
     "family": "Mug",
     "color": "#759808",
     "image": "/static/capsules/mexico.png",
@@ -22,6 +25,7 @@
   },
   {
     "name": "Stormio",
+    "sku": "7088.20",
     "family": "Mug",
     "color": "#446323",
     "image": "/static/capsules/stormio.png",
@@ -29,6 +33,7 @@
   },
   {
     "name": "Maple Pecan",
+    "sku": "7076.20",
     "family": "Mug",
     "color": "#dd976f",
     "image": "/static/capsules/maple-pecan.png",
@@ -36,6 +41,7 @@
   },
   {
     "name": "Cinnamon Apple Crisp",
+    "sku": "7087.20",
     "family": "Mug",
     "color": "#da6348",
     "image": "/static/capsules/cinnamon-apple-crisp.png",
@@ -43,6 +49,7 @@
   },
   {
     "name": "Pumpkin Spice Cake",
+    "sku": "7072.20",
     "family": "Mug",
     "color": "#a75933",
     "image": "/static/capsules/pumpkin-spice-cake.png",
@@ -50,6 +57,7 @@
   },
   {
     "name": "Fortado",
+    "sku": "7231.20",
     "family": "Gran Lungo",
     "color": "#75746f",
     "image": "/static/capsules/fortado.png",
@@ -57,6 +65,7 @@
   },
   {
     "name": "Active",
+    "sku": "7192.20",
     "family": "Double Espresso",
     "color": "#f0b94c",
     "image": "/static/capsules/active.png",
@@ -64,6 +73,7 @@
   },
   {
     "name": "Bianco Doppio",
+    "sku": "7092.20",
     "family": "Double Espresso",
     "color": "#c69660",
     "image": "/static/capsules/bianco-doppio.png",
@@ -71,6 +81,7 @@
   },
   {
     "name": "Double Espresso Chiaro",
+    "sku": "7045.20",
     "family": "Double Espresso",
     "color": "#503e2f",
     "image": "/static/capsules/double-espresso-chiaro.png",
@@ -78,6 +89,7 @@
   },
   {
     "name": "Double Espresso Chiaro Decaffeinato",
+    "sku": "7279.20",
     "family": "Double Espresso",
     "color": "#6a4530",
     "image": "/static/capsules/double-espresso-chiaro-decaffeinato.png",
@@ -85,6 +97,7 @@
   },
   {
     "name": "Double Espresso Dolce",
+    "sku": "7085.20",
     "family": "Double Espresso",
     "color": "#9b683a",
     "image": "/static/capsules/double-espresso-dolce.png",
@@ -92,6 +105,7 @@
   },
   {
     "name": "Double Espresso Scuro",
+    "sku": "7298.20",
     "family": "Double Espresso",
     "color": "#423732",
     "image": "/static/capsules/double-espresso-scuro.png",
@@ -99,6 +113,7 @@
   },
   {
     "name": "Ginseng Delight",
+    "sku": "7066.20",
     "family": "Double Espresso",
     "color": "#e17e79",
     "image": "/static/capsules/ginseng-delight.png",
@@ -106,6 +121,7 @@
   },
   {
     "name": "Yuzu Vanilla Over Ice",
+    "sku": "7094.20",
     "family": "Double Espresso",
     "color": "#e2dcaf",
     "image": "/static/capsules/yuzu-vanilla-over-ice.png",
@@ -113,6 +129,7 @@
   },
   {
     "name": "Altissio",
+    "sku": "7048.20",
     "family": "Espresso",
     "color": "#694487",
     "image": "/static/capsules/altissio.png",
@@ -120,6 +137,7 @@
   },
   {
     "name": "Altissio Decaffeinato",
+    "sku": "7000.20",
     "family": "Espresso",
     "color": "#6a477b",
     "image": "/static/capsules/altissio-decaffeinato.png",
@@ -127,6 +145,7 @@
   },
   {
     "name": "Diavolitto",
+    "sku": "7049.20",
     "family": "Espresso",
     "color": "#36466c",
     "image": "/static/capsules/diavolitto.png",
@@ -134,6 +153,7 @@
   },
   {
     "name": "Il Caffè",
+    "sku": "7060.20",
     "family": "Espresso",
     "color": "#535b46",
     "image": "/static/capsules/il-caffe.png",
@@ -141,6 +161,7 @@
   },
   {
     "name": "Orafio",
+    "sku": "7036.20",
     "family": "Espresso",
     "color": "#c87d35",
     "image": "/static/capsules/orafio.png",
@@ -148,6 +169,7 @@
   },
   {
     "name": "Peru Organic",
+    "sku": "7012.20",
     "family": "Espresso",
     "color": "#89a044",
     "image": "/static/capsules/peru-organic.png",
@@ -155,6 +177,7 @@
   },
   {
     "name": "Voltesso",
+    "sku": "7047.20",
     "family": "Espresso",
     "color": "#ce933f",
     "image": "/static/capsules/voltesso.png",
@@ -162,6 +185,7 @@
   },
   {
     "name": "Arondio",
+    "sku": "7093.20",
     "family": "Gran Lungo",
     "color": "#a8968d",
     "image": "/static/capsules/arondio.png",
@@ -169,6 +193,7 @@
   },
   {
     "name": "Costa Rica",
+    "sku": "7091.20",
     "family": "Gran Lungo",
     "color": "#1d8ca6",
     "image": "/static/capsules/costa-rica.png",
@@ -176,6 +201,7 @@
   },
   {
     "name": "Ethiopia",
+    "sku": "7017.20",
     "family": "Gran Lungo",
     "color": "#a56958",
     "image": "/static/capsules/ethiopia.png",
@@ -183,6 +209,7 @@
   },
   {
     "name": "Fortado Decaffeinato",
+    "sku": "7015.20",
     "family": "Gran Lungo",
     "color": "#7f6e68",
     "image": "/static/capsules/fortado-decaffeinato.png",
@@ -190,6 +217,7 @@
   },
   {
     "name": "Inizio",
+    "sku": "7014.20",
     "family": "Gran Lungo",
     "color": "#ea9040",
     "image": "/static/capsules/inizio.png",
@@ -197,6 +225,7 @@
   },
   {
     "name": "Bianco Forte",
+    "sku": "7030.20",
     "family": "Mug",
     "color": "#965c29",
     "image": "/static/capsules/bianco-forte.png",
@@ -204,6 +233,7 @@
   },
   {
     "name": "Coconut Vanilla Flavour",
+    "sku": "7070.20",
     "family": "Mug",
     "color": "#e9e0c7",
     "image": "/static/capsules/coconut-vanilla-flavour.png",
@@ -211,6 +241,7 @@
   },
   {
     "name": "Colombia",
+    "sku": "7090.20",
     "family": "Mug",
     "color": "#8d5466",
     "image": "/static/capsules/colombia.png",
@@ -218,6 +249,7 @@
   },
   {
     "name": "El Salvador",
+    "sku": "7027.20",
     "family": "Mug",
     "color": "#aa4247",
     "image": "/static/capsules/el-salvador.png",
@@ -225,6 +257,7 @@
   },
   {
     "name": "Golden Caramel",
+    "sku": "7295.20",
     "family": "Mug",
     "color": "#cd9960",
     "image": "/static/capsules/golden-caramel.png",
@@ -232,6 +265,7 @@
   },
   {
     "name": "Half Caffeinato",
+    "sku": "7025.20",
     "family": "Mug",
     "color": "#551e20",
     "image": "/static/capsules/half-caffeinato.png",
@@ -239,6 +273,7 @@
   },
   {
     "name": "Kahawa Ya Congo",
+    "sku": "7061.20",
     "family": "Mug",
     "color": "#3e3a38",
     "image": "/static/capsules/kahawa-ya-congo.png",
@@ -246,6 +281,7 @@
   },
   {
     "name": "Melozio Decaffeinato",
+    "sku": "7023.20",
     "family": "Mug",
     "color": "#cb9062",
     "image": "/static/capsules/melozio-decaffeinato.png",
@@ -253,6 +289,7 @@
   },
   {
     "name": "Melozio Go",
+    "sku": "7065.20",
     "family": "Mug",
     "color": "#b49065",
     "image": "/static/capsules/melozio-go.png",
@@ -260,6 +297,7 @@
   },
   {
     "name": "Odacio",
+    "sku": "7003.20",
     "family": "Mug",
     "color": "#13607c",
     "image": "/static/capsules/odacio.png",
@@ -267,6 +305,7 @@
   },
   {
     "name": "Rich Chocolate",
+    "sku": "7296.20",
     "family": "Mug",
     "color": "#715043",
     "image": "/static/capsules/rich-chocolate.png",
@@ -274,6 +313,7 @@
   },
   {
     "name": "Roasted Hazelnut",
+    "sku": "7294.20",
     "family": "Mug",
     "color": "#9f5546",
     "image": "/static/capsules/roasted-hazelnut.png",
@@ -281,6 +321,7 @@
   },
   {
     "name": "Solelio",
+    "sku": "7089.20",
     "family": "Mug",
     "color": "#e8b620",
     "image": "/static/capsules/solelio.png",
@@ -288,6 +329,7 @@
   },
   {
     "name": "Stormio Go",
+    "sku": "7064.20",
     "family": "Mug",
     "color": "#47583c",
     "image": "/static/capsules/stormio-go.png",
@@ -295,6 +337,7 @@
   },
   {
     "name": "Sweet Vanilla",
+    "sku": "7292.20",
     "family": "Mug",
     "color": "#baaa8a",
     "image": "/static/capsules/sweet-vanilla.png",
@@ -302,6 +345,7 @@
   },
   {
     "name": "Sweet Vanilla Decaffeinato",
+    "sku": "7057.20",
     "family": "Mug",
     "color": "#c2a785",
     "image": "/static/capsules/sweet-vanilla-decaffeinato.png",
@@ -309,6 +353,7 @@
   },
   {
     "name": "Vivida",
+    "sku": "7099.20",
     "family": "Mug",
     "color": "#bd968e",
     "image": "/static/capsules/vivida.png",
@@ -316,6 +361,7 @@
   },
   {
     "name": "Carafe Pour-Over Style",
+    "sku": "7006.20",
     "family": "Carafe",
     "color": "#bf8f8d",
     "image": "/static/capsules/carafe-pour-over-style.png",
@@ -323,13 +369,42 @@
   },
   {
     "name": "Togetherness Blend",
+    "sku": "7082.20",
     "family": "Double Espresso",
     "color": "#39413d",
     "image": "/static/capsules/togetherness-blend.png",
     "intensity": 7
   },
   {
-    "name": "Ispirazione Ristretto Italiano",
+    "name": "Crystal Spark Double Espresso",
+    "sku": "7429.20",
+    "family": "Double Espresso",
+    "color": "#89b883",
+    "image": "/static/capsules/crystal-spark-double-espresso.png",
+    "intensity": 6,
+    "special": true
+  },
+  {
+    "name": "Blueberry Cheesecake Flavoured Coffee",
+    "sku": "7400.20",
+    "family": "Mug",
+    "color": "#809bb3",
+    "image": "/static/capsules/blueberry-cheesecake-flavoured-coffee.png",
+    "intensity": 0,
+    "special": true
+  },
+  {
+    "name": "Hazelnut Brownie Flavoured Coffee",
+    "sku": "7200.20",
+    "family": "Mug",
+    "color": "#b27990",
+    "image": "/static/capsules/hazelnut-brownie-flavoured-coffee.png",
+    "intensity": 0,
+    "special": true
+  },
+  {
+    "name": "Ristretto",
+    "sku": "7987.20",
     "family": "Ristretto",
     "color": "#2a2a2a",
     "image": "/static/capsules/ispirazione-ristretto-italiano.png",
@@ -337,7 +412,8 @@
     "line": "original"
   },
   {
-    "name": "Ispirazione Ristretto Decaffeinato",
+    "name": "Ristretto Decaffeinato",
+    "sku": "7980.20",
     "family": "Ristretto",
     "color": "#3d3a37",
     "image": "/static/capsules/ispirazione-ristretto-decaffeinato.png",
@@ -346,6 +422,7 @@
   },
   {
     "name": "Ispirazione Napoli",
+    "sku": "7984.20",
     "family": "Ristretto",
     "color": "#171310",
     "image": "/static/capsules/ispirazione-napoli.png",
@@ -353,7 +430,8 @@
     "line": "original"
   },
   {
-    "name": "Ispirazione Palermo Kazaar",
+    "name": "Kazaar",
+    "sku": "7972.20",
     "family": "Ristretto",
     "color": "#241a12",
     "image": "/static/capsules/ispirazione-palermo-kazaar.png",
@@ -362,6 +440,7 @@
   },
   {
     "name": "Ispirazione Venezia",
+    "sku": "7986.20",
     "family": "Ristretto",
     "color": "#5b4530",
     "image": "/static/capsules/ispirazione-venezia.png",
@@ -370,6 +449,7 @@
   },
   {
     "name": "Ispirazione Istanbul",
+    "sku": "7877.20",
     "family": "Ristretto",
     "color": "#6d4a2c",
     "image": "/static/capsules/ispirazione-istanbul.png",
@@ -377,7 +457,8 @@
     "line": "original"
   },
   {
-    "name": "Ispirazione Firenze Arpeggio",
+    "name": "Arpeggio",
+    "sku": "7928.20",
     "family": "Espresso",
     "color": "#4a3125",
     "image": "/static/capsules/ispirazione-firenze-arpeggio.png",
@@ -386,6 +467,7 @@
   },
   {
     "name": "Arpeggio Decaffeinato",
+    "sku": "7943.20",
     "family": "Espresso",
     "color": "#5e4436",
     "image": "/static/capsules/arpeggio-decaffeinato.png",
@@ -394,6 +476,7 @@
   },
   {
     "name": "Ispirazione Roma",
+    "sku": "7985.20",
     "family": "Espresso",
     "color": "#71482a",
     "image": "/static/capsules/ispirazione-roma.png",
@@ -401,7 +484,8 @@
     "line": "original"
   },
   {
-    "name": "Ispirazione Genova Livanto",
+    "name": "Livanto",
+    "sku": "7979.20",
     "family": "Espresso",
     "color": "#8a5a2b",
     "image": "/static/capsules/ispirazione-genova-livanto.png",
@@ -410,6 +494,7 @@
   },
   {
     "name": "Capriccio",
+    "sku": "7961.20",
     "family": "Espresso",
     "color": "#7d5a3c",
     "image": "/static/capsules/capriccio.png",
@@ -418,6 +503,7 @@
   },
   {
     "name": "Volluto",
+    "sku": "7983.20",
     "family": "Espresso",
     "color": "#c9a227",
     "image": "/static/capsules/volluto.png",
@@ -426,6 +512,7 @@
   },
   {
     "name": "Cosi",
+    "sku": "7969.20",
     "family": "Espresso",
     "color": "#84b0a8",
     "image": "/static/capsules/cosi.png",
@@ -433,7 +520,8 @@
     "line": "original"
   },
   {
-    "name": "Decaffeinato Volluto",
+    "name": "Volluto Decaffeinato",
+    "sku": "7932.20",
     "family": "Espresso",
     "color": "#cbb069",
     "image": "/static/capsules/decaffeinato-volluto.png",
@@ -441,7 +529,8 @@
     "line": "original"
   },
   {
-    "name": "Vienna Linizio Lungo",
+    "name": "Vienna Lungo",
+    "sku": "7959.20",
     "family": "Lungo",
     "color": "#c9971f",
     "image": "/static/capsules/vienna-linizio-lungo.png",
@@ -449,7 +538,8 @@
     "line": "original"
   },
   {
-    "name": "Tokyo Vivalto Lungo",
+    "name": "Tokyo Lungo",
+    "sku": "7936.20",
     "family": "Lungo",
     "color": "#356f8e",
     "image": "/static/capsules/tokyo-vivalto-lungo.png",
@@ -457,7 +547,8 @@
     "line": "original"
   },
   {
-    "name": "Stockholm Fortissio Lungo",
+    "name": "Stockholm Lungo",
+    "sku": "7926.20",
     "family": "Lungo",
     "color": "#3c6b45",
     "image": "/static/capsules/stockholm-fortissio-lungo.png",
@@ -465,7 +556,8 @@
     "line": "original"
   },
   {
-    "name": "Cape Town Envivo Lungo",
+    "name": "Cape Town Lungo",
+    "sku": "7948.20",
     "family": "Lungo",
     "color": "#93372b",
     "image": "/static/capsules/cape-town-envivo-lungo.png",
@@ -474,6 +566,7 @@
   },
   {
     "name": "Buenos Aires Lungo",
+    "sku": "7946.20",
     "family": "Lungo",
     "color": "#cf8a3a",
     "image": "/static/capsules/buenos-aires-lungo.png",
@@ -482,6 +575,7 @@
   },
   {
     "name": "Shanghai Lungo",
+    "sku": "7947.20",
     "family": "Lungo",
     "color": "#a9563a",
     "image": "/static/capsules/shanghai-lungo.png",
@@ -489,7 +583,8 @@
     "line": "original"
   },
   {
-    "name": "Master Origins Colombia",
+    "name": "Colombia",
+    "sku": "7929.20",
     "family": "Espresso",
     "color": "#8e2b2b",
     "image": "/static/capsules/master-origins-colombia.png",
@@ -498,6 +593,7 @@
   },
   {
     "name": "Master Origins Ethiopia",
+    "sku": "7017.50",
     "family": "Espresso",
     "color": "#6f4b8f",
     "image": "/static/capsules/master-origins-ethiopia.png",
@@ -505,7 +601,8 @@
     "line": "original"
   },
   {
-    "name": "Master Origins India",
+    "name": "India",
+    "sku": "7977.20",
     "family": "Espresso",
     "color": "#4b5f2a",
     "image": "/static/capsules/master-origins-india.png",
@@ -513,7 +610,8 @@
     "line": "original"
   },
   {
-    "name": "Master Origins Indonesia",
+    "name": "Indonesia",
+    "sku": "7975.20",
     "family": "Espresso",
     "color": "#4a3526",
     "image": "/static/capsules/master-origins-indonesia.png",
@@ -521,7 +619,8 @@
     "line": "original"
   },
   {
-    "name": "Master Origins Nicaragua",
+    "name": "Nicaragua",
+    "sku": "7973.20",
     "family": "Espresso",
     "color": "#1f6f6b",
     "image": "/static/capsules/master-origins-nicaragua.png",
@@ -529,7 +628,8 @@
     "line": "original"
   },
   {
-    "name": "Master Origins Kahawa ya Congo",
+    "name": "Kahawa Ya Congo",
+    "sku": "7934.20",
     "family": "Espresso",
     "color": "#a05a1e",
     "image": "/static/capsules/master-origins-kahawa-ya-congo.png",
@@ -538,29 +638,32 @@
   },
   {
     "name": "Festive Espresso",
+    "sku": "7919.30",
     "family": "Espresso",
     "color": "#7a1f2b",
     "image": "/static/capsules/festive-espresso.png",
     "intensity": 0,
-    "line": "original",
-    "special": true
+    "special": true,
+    "line": "original"
   },
   {
     "name": "Almond Hibiskus",
+    "sku": "7907.30",
     "family": "Espresso",
     "color": "#c2568a",
     "image": "/static/capsules/almond-hibiskus.png",
     "intensity": 0,
-    "line": "original",
-    "special": true
+    "special": true,
+    "line": "original"
   },
   {
     "name": "Cinnamon Tamarind",
+    "sku": "7974.30",
     "family": "Espresso",
     "color": "#a45a24",
     "image": "/static/capsules/cinnamon-tamarind.png",
     "intensity": 0,
-    "line": "original",
-    "special": true
+    "special": true,
+    "line": "original"
   }
 ]

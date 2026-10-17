@@ -31,6 +31,27 @@ ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("NESPRESSO_DB", ROOT / "data" / "nespresso.db"))
 CATALOG = ROOT / "capsules.json"
 INDEX = ROOT / "static" / "index.html"
+
+# The store renamed its Original Line capsules in 2026 ("Ispirazione Firenze Arpeggio" is now
+# just "Arpeggio"). One migration renames the inventory rows to match; capsules the store
+# delisted are not in here and simply keep the name the owner already has.
+CATALOGUE_RENAMES = {
+    "Ispirazione Ristretto Italiano": "Ristretto",
+    "Ispirazione Ristretto Decaffeinato": "Ristretto Decaffeinato",
+    "Ispirazione Palermo Kazaar": "Kazaar",
+    "Ispirazione Firenze Arpeggio": "Arpeggio",
+    "Ispirazione Genova Livanto": "Livanto",
+    "Decaffeinato Volluto": "Volluto Decaffeinato",
+    "Vienna Linizio Lungo": "Vienna Lungo",
+    "Tokyo Vivalto Lungo": "Tokyo Lungo",
+    "Stockholm Fortissio Lungo": "Stockholm Lungo",
+    "Cape Town Envivo Lungo": "Cape Town Lungo",
+    "Master Origins Colombia": "Colombia",
+    "Master Origins India": "India",
+    "Master Origins Indonesia": "Indonesia",
+    "Master Origins Nicaragua": "Nicaragua",
+    "Master Origins Kahawa ya Congo": "Kahawa Ya Congo",
+}
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8787"))
 
@@ -124,6 +145,7 @@ def init_db(conn: sqlite3.Connection, seed_path: Path = CATALOG) -> None:
         CREATE TABLE IF NOT EXISTS capsules (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             name      TEXT NOT NULL,
+            sku       TEXT NOT NULL DEFAULT '',
             family    TEXT NOT NULL,
             color     TEXT NOT NULL DEFAULT '#6b4f3a',
             image     TEXT NOT NULL DEFAULT '',
@@ -156,9 +178,10 @@ def init_db(conn: sqlite3.Connection, seed_path: Path = CATALOG) -> None:
     if conn.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] == 0 and seed_path.exists():
         seed = json.loads(seed_path.read_text())
         conn.executemany(
-            "INSERT INTO capsules (name, family, color, image, intensity, special, line)"
-            " VALUES (:name, :family, :color, :image, :intensity, :special, :line)",
-            [{**c, "image": c.get("image", ""), "intensity": c.get("intensity", 0),
+            "INSERT INTO capsules (name, sku, family, color, image, intensity, special, line)"
+            " VALUES (:name, :sku, :family, :color, :image, :intensity, :special, :line)",
+            [{**c, "image": c.get("image", ""), "sku": c.get("sku", ""),
+              "intensity": c.get("intensity", 0),
               "special": 1 if c.get("special") else 0, "line": entry_line(c)} for c in seed],
         )
     conn.commit()
@@ -188,9 +211,56 @@ def migrate(conn: sqlite3.Connection) -> None:
                     )
     if "special" not in capsule_cols:
         conn.execute("ALTER TABLE capsules ADD COLUMN special INTEGER NOT NULL DEFAULT 0")
+    if "sku" not in capsule_cols:
+        conn.execute("ALTER TABLE capsules ADD COLUMN sku TEXT NOT NULL DEFAULT ''")
+        backfill_skus(conn)
+    elif CATALOG.exists():
+        # The catalogue picked up skus after this install launched (capsules the store had
+        # delisted when the owner added them) — stamp them onto the still-blank rows.
+        fill_empty_skus(conn)
     brew_cols = {r[1] for r in conn.execute("PRAGMA table_info(brews)")}
     if "delta" not in brew_cols:
         conn.execute("ALTER TABLE brews ADD COLUMN delta INTEGER NOT NULL DEFAULT -1")
+    conn.commit()
+
+
+def _catalogue_skus() -> dict[tuple[str, str], str]:
+    """(name, line) -> sku from the catalogue. Keyed by line as well as name: Colombia and
+    Kahawa Ya Congo exist on both lines, so a name-only match would stamp one line's capsule
+    with the other line's sku."""
+    if not CATALOG.exists():
+        return {}
+    return {(c["name"], entry_line(c)): c["sku"] for c in json.loads(CATALOG.read_text())
+            if c.get("sku")}
+
+
+def backfill_skus(conn: sqlite3.Connection) -> None:
+    """One-time for DBs that predate the sku column: stamp each row with the catalogue sku it
+    belongs to and rename the rows whose store name changed. A row only gains a sku while it is
+    blank, and a rename never lands on a name the owner already uses (the catalogue is the
+    source of both the new name and its sku)."""
+    if not CATALOG.exists():
+        return
+    # name -> sku, last entry winning: two rename targets are shared with the Vertuo line
+    # (Colombia, Kahawa Ya Congo) and the Original Line entry is the one that comes last.
+    sku_by_name = {c["name"]: c["sku"] for c in json.loads(CATALOG.read_text()) if c.get("sku")}
+    for old, new in CATALOGUE_RENAMES.items():
+        sku = sku_by_name.get(new)
+        if sku:
+            conn.execute(
+                "UPDATE capsules SET name = ?, sku = ? WHERE name = ? AND sku = ''"
+                " AND NOT EXISTS (SELECT 1 FROM capsules WHERE name = ?)",
+                (new, sku, old, new),
+            )
+    fill_empty_skus(conn)
+
+
+def fill_empty_skus(conn: sqlite3.Connection) -> None:
+    """Stamp a row that still has no sku, whenever the catalogue learned it (e.g. a capsule
+    the store had delisted when the owner added it). Never overwrites a set sku."""
+    for (name, line), sku in _catalogue_skus().items():
+        conn.execute("UPDATE capsules SET sku = ? WHERE name = ? AND line = ? AND sku = ''",
+                     (sku, name, line))
     conn.commit()
 
 
@@ -410,13 +480,14 @@ def match_capsule(conn, name: str, line: str | None = None) -> dict | None:
     keys = {re.sub(r"[^a-z0-9]", "", r["name"].lower()): r for r in rows}
     names = {r["id"]: re.findall(r"[a-z0-9]+", r["name"].lower()) for r in rows}
     needle = re.sub(r"[^a-z0-9]", "", (name or "").lower())
-    if not needle or needle in FAMILY_WORDS:
-        return None  # a bare cup size (“espresso”) names no capsule, it is printed on all of them
+    tokens = re.findall(r"[a-z0-9]+", (name or "").lower())
+    if not tokens or set(tokens) <= FAMILY_WORDS:
+        # a bare cup size ("espresso", "double espresso") names no capsule: every pod prints one
+        return None
     if needle in keys:
         return keys[needle]
     # A partial read is only usable when exactly one name ends with it: 'CHIARO' → Double
-    # Espresso Chiaro, while 'DOUBLE ESPRESSO' fits three flavours and stays a colour question.
-    tokens = re.findall(r"[a-z0-9]+", (name or "").lower())
+    # Espresso Chiaro, while 'DOUBLE ESPRESSO' fits several flavours and stays a colour question.
     tails = [r for r in rows if names[r["id"]][-len(tokens):] == tokens]
     if len(tails) == 1:
         return tails[0]
@@ -569,6 +640,18 @@ def get_setting(conn: sqlite3.Connection, key: str, default: str = "") -> str:
     return row["value"] if row else default
 
 
+def ntfy_host_ok(url: str) -> None:
+    """A client-chosen test target must stay on an ntfy host. Without this, a client
+    could make the server POST to arbitrary LAN hosts — a server-driven port scan."""
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+    if p.scheme == "https" and (host == "ntfy.sh" or host.endswith(".ntfy.sh")):
+        return
+    if host in ("localhost", "127.0.0.1"):
+        return
+    raise ValueError("test target must be ntfy.sh or localhost")
+
+
 def ntfy_send(url: str, message: str, title: str = "Nespresso") -> str | None:
     """POST to an ntfy topic (ntfy.sh or self-hosted). Returns an error string, or None."""
     try:
@@ -688,14 +771,88 @@ def available_languages() -> list[dict]:
     return out
 
 
-def known_catalogue(path=CATALOG) -> list[dict]:
-    """Catalogue entries (name, family, colour, photo, intensity) — the capsules the app
-    knows about. Read per call so edits to capsules.json land without a restart.
-    ponytail: no cache, the file is a few kB and /api/state is not hot."""
+# ------------------------------------------------------------- scanner catalogue
+# nespresso-scanner (own repo) rescans the store twice a day and publishes the
+# machine-readable capsule catalogue. Its diff against capsules.json is the
+# "new capsule" hint. CATALOGUE_URL empty disables the whole thing.
+SCANNER_URL = os.environ.get(
+    "CATALOGUE_URL",
+    "https://raw.githubusercontent.com/avpnusr/nespresso-scanner/main/catalogue.json",
+)
+_scanner_entries: list[dict] = []  # last good remote entries; empty until the first fetch
+_scanner_lock = threading.Lock()
+
+
+def remote_entries() -> list[dict]:
+    with _scanner_lock:
+        return list(_scanner_entries)
+
+
+def refresh_scanner() -> list[dict]:
+    """Fetch the remote catalogue once. Keeps the last good data on failure and never
+    raises — a dead host must not break the dashboard."""
+    if not SCANNER_URL:
+        return []
     try:
-        return json.loads(path.read_text())
+        with urllib.request.urlopen(SCANNER_URL, timeout=10) as resp:
+            data = json.loads(resp.read())
+        good = [e for e in data.get("capsules", []) if isinstance(e, dict)
+                and (e.get("sku") or e.get("name"))]
+        with _scanner_lock:
+            _scanner_entries[:] = good
+    except Exception as err:  # noqa: BLE001 - the remote catalogue is best-effort
+        print(f"scanner catalogue: {err}", file=sys.stderr)
+    return remote_entries()
+
+
+def scanner_daemon() -> None:
+    """Refresh at startup and every 6 h (the scanner publishes twice a day). Runs off
+    the request path so /api/state is never blocked on the network."""
+    tick = threading.Event()
+    while True:
+        refresh_scanner()
+        tick.wait(6 * 3600)
+
+
+def merge_catalogue(local: list[dict], remote: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Picker entries (local capsules.json + remote) and the remote diff ("new capsules").
+    Diffs by sku first, name second — the store renames capsules, so a name-only diff
+    would flag capsules already known as new. Remote entries are normalised (line,
+    family) so the picker works with them."""
+    local_skus = {(e.get("sku") or "").strip() for e in local}
+    # line-scoped: both systems share names (Colombia), so a plain name match would hide one
+    # line's capsule behind the other's
+    local_names = {(entry_line(e), (e.get("name") or "").strip().lower()) for e in local}
+    new: list[dict] = []
+    seen: set[str] = set()
+    for e in remote:
+        if e.get("available") is False:
+            continue  # the store delisted it — not a new capsule
+        sku = (e.get("sku") or "").strip()
+        name = (e.get("name") or "").strip().lower()
+        if not name and not sku:
+            continue
+        line = valid_line(e.get("line"))
+        if sku in seen or (line, name) in local_names or (sku and sku in local_skus):
+            continue  # already known locally, or a duplicate inside the remote list
+        seen.add(sku or "name:" + name)
+        new.append({**e, "sku": sku, "line": line, "family": normalize_family(e.get("family"), line)})
+    return [*local, *new], new
+
+
+def local_catalogue() -> list[dict]:
+    try:
+        return json.loads(CATALOG.read_text())
     except (OSError, ValueError):
         return []
+
+
+def known_catalogue() -> list[dict]:
+    """Catalogue entries (name, family, colour, photo, intensity) — the capsules the app
+    knows about: the local file plus the scanner's remote entries. Read per call so
+    edits to capsules.json land without a restart.
+    ponytail: no cache, the file is a few kB and /api/state is not hot."""
+    return merge_catalogue(local_catalogue(), remote_entries())[0]
 
 
 def current_state(conn) -> dict:
@@ -705,9 +862,20 @@ def current_state(conn) -> dict:
     line = valid_line(machine.get("machine_line"))
     capsules = [dict(r) for r in conn.execute("SELECT * FROM capsules WHERE line = ?", (line,))]
     # Known-but-not-inventoried capsules of this line, for the "add capsule" picker.
-    owned = {r["name"].strip().lower() for r in conn.execute("SELECT name FROM capsules")}
-    known = [c for c in known_catalogue()
-             if entry_line(c) == line and c.get("name", "").strip().lower() not in owned]
+    # Ownership is the sku when both sides have one (the store renames capsules), the name
+    # otherwise (a hand-added capsule has no sku). `known` is the catalogue you don't own yet.
+    owned_names = {r["name"].strip().lower() for r in conn.execute("SELECT name FROM capsules")}
+    owned_skus = {r["sku"] for r in conn.execute("SELECT sku FROM capsules") if r["sku"]}
+
+    def owned(c: dict) -> bool:
+        sku = (c.get("sku") or "").strip()
+        return (bool(sku) and sku in owned_skus) \
+            or c.get("name", "").strip().lower() in owned_names
+
+    merged, scanner_new = merge_catalogue(local_catalogue(), remote_entries())
+    known = [c for c in merged if entry_line(c) == line and not owned(c)]
+    # New-capsule hint: remote-only entries the owner does not have yet (line-scoped).
+    new_capsules = [c for c in scanner_new if entry_line(c) == line and not owned(c)]
     # Manual drag order wins; anything unlisted (new capsule) keeps family/name order at the end.
     order = [int(x) for x in machine.get("capsule_order", "").split(",") if x]
     pos = {cid: i for i, cid in enumerate(order)}
@@ -722,7 +890,7 @@ def current_state(conn) -> dict:
     )]
     return {
         "capsules": capsules, "brews": brews, "pending": pending,
-        "maintenance": maintenance_state(conn),
+        "maintenance": maintenance_state(conn), "new_capsules": new_capsules,
         "machine": machine, "families": FAMILIES[line], "known": known,
         "lines": [{"key": k, "label": v} for k, v in LINE_LABELS.items()],
     }
@@ -736,7 +904,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # keep the console clean
         pass
 
-    def _send(self, code, payload=None, ctype="application/json"):
+    def _send(self, code, payload=None, ctype="application/json", cache=None):
         if payload is None:
             body = b""
         elif isinstance(payload, bytes):
@@ -748,12 +916,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        if cache:
+            self.send_header("Cache-Control", cache)
         self.end_headers()
         if body:
             self.wfile.write(body)
 
     def _body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._send(400, {"error": "invalid Content-Length"})
+            raise ConnectionError("invalid Content-Length")
         if length > 10 * 1024 * 1024:  # photos come in at ~1024px; anything bigger is abuse
             self._send(413, {"error": "body too large"})
             raise ConnectionError("body too large")
@@ -797,7 +971,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
             return
         ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        self._send(200, target.read_bytes(), ctype)
+        # Photos and translation files change only with a deploy — let the browser hold them.
+        self._send(200, target.read_bytes(), ctype, cache="public, max-age=3600")
 
     def do_POST(self):
         url = urlparse(self.path)
@@ -838,9 +1013,12 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == "/api/import":
                 self._send(200, import_data(conn, payload))
             elif url.path == "/api/notify-test":
-                target = payload.get("url") or get_setting(conn, "ntfy_url")
+                stored = get_setting(conn, "ntfy_url")
+                target = payload.get("url") or stored
                 if not target:
                     raise ValueError("no ntfy topic URL configured")
+                if target != stored:
+                    ntfy_host_ok(target)  # a client-chosen target is restricted
                 err = ntfy_send(target, "Test notification — your Nespresso dashboard is wired up.",
                                 title="Nespresso - test")
                 self._send(200, {"ok": err is None, "error": err})
@@ -863,6 +1041,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _upsert_capsule(self, conn, payload):
         fields = {k: payload.get(k, "") for k in ("name", "family", "color", "image", "notes")}
+        fields["sku"] = (payload.get("sku") or "").strip()
         if not fields["name"] or not fields["family"]:
             raise ValueError("name and family are required")
         count = max(0, int(payload.get("count", 0) or 0))
@@ -874,7 +1053,7 @@ class Handler(BaseHTTPRequestHandler):
         special = 1 if payload.get("special") else 0
         if payload.get("id"):
             conn.execute(
-                """UPDATE capsules SET name=:name, family=:family, color=:color,
+                """UPDATE capsules SET name=:name, sku=:sku, family=:family, color=:color,
                    image=:image, notes=:notes, count=:count, price=:price,
                    threshold=:threshold, intensity=:intensity, special=:special WHERE id=:id""",
                 {**fields, "count": count, "price": price, "threshold": threshold,
@@ -883,8 +1062,8 @@ class Handler(BaseHTTPRequestHandler):
         else:
             # A new capsule belongs to the machine in use, so the dashboard keeps showing it.
             conn.execute(
-                """INSERT INTO capsules (name, family, color, image, notes, count, price, threshold, intensity, special, line)
-                   VALUES (:name, :family, :color, :image, :notes, :count, :price, :threshold, :intensity, :special, :line)""",
+                """INSERT INTO capsules (name, sku, family, color, image, notes, count, price, threshold, intensity, special, line)
+                   VALUES (:name, :sku, :family, :color, :image, :notes, :count, :price, :threshold, :intensity, :special, :line)""",
                 {**fields, "count": count, "price": price, "threshold": threshold,
                  "intensity": intensity, "special": special, "line": machine_line(conn)},
             )
@@ -930,6 +1109,13 @@ def selftest() -> None:
         conn = connect(Path(tmp) / "t.db")
         init_db(conn, CATALOG)
         assert conn.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] > 0
+        # a catalogue entry without a sku falls back to name matching — that is the delisted-
+        # capsule blind spot, so every seed entry must carry one. Duplicates would make one
+        # capsule look owned twice (sku is the identity), so catch those here too.
+        seed = local_catalogue()
+        assert all(c.get("sku") for c in seed)
+        skus = [c["sku"] for c in seed]
+        assert len(skus) == len(set(skus)), "duplicate sku in capsules.json"
         # every catalogue photo the dashboard points at actually ships with the repo
         for entry in known_catalogue():
             image = entry.get("image", "")
@@ -946,6 +1132,30 @@ def selftest() -> None:
         known = current_state(conn)["known"]
         assert [k["name"] for k in known] == [other["name"]], known
         assert known[0]["color"] == other["color"] and known[0]["image"], known
+
+        # sku identity: a store rename must not make a capsule the owner already has look new
+        sku_entry = next(c for c in known_catalogue()
+                         if c.get("sku") and entry_line(c) == "vertuo" and c["name"] != other["name"])
+        conn.execute(
+            "INSERT INTO capsules (name, sku, family, color, image, intensity, special, line)"
+            " VALUES (?, ?, 'Mug', '#000000', '', 0, 0, 'vertuo')",
+            ("Renamed " + sku_entry["name"], sku_entry["sku"]),
+        )
+        assert all(k.get("sku") != sku_entry["sku"] for k in current_state(conn)["known"])
+
+        # the one-time backfill renames a pre-sku row and stamps its sku
+        old_name = next(iter(CATALOGUE_RENAMES))
+        new_name = CATALOGUE_RENAMES[old_name]
+        conn.execute("DELETE FROM capsules WHERE name = ?", (new_name,))
+        conn.execute(
+            "INSERT INTO capsules (name, family, color, image, intensity, special, line, sku)"
+            " VALUES (?, 'Espresso', '#000000', '', 0, 0, 'original', '')",
+            (old_name,),
+        )
+        backfill_skus(conn)
+        assert conn.execute("SELECT sku FROM capsules WHERE name = ?", (new_name,)).fetchone()["sku"], \
+            "rename backfill did not stamp a sku"
+        assert not conn.execute("SELECT 1 FROM capsules WHERE name = ?", (old_name,)).fetchone()
 
         # the model misspells or half-reads what it prints, and a read name beats the shortlist
         if conn.execute("SELECT 1 FROM capsules WHERE name='Voltesso'").fetchone():
@@ -1083,6 +1293,22 @@ def selftest() -> None:
         # migration is idempotent on an already-migrated db
         migrate(conn)
 
+        # a sku the catalogue added after the install launched lands on a blank row at startup
+        conn.execute("UPDATE capsules SET sku = '' WHERE name = 'Peru Organic'")
+        conn.commit()
+        migrate(conn)
+        assert conn.execute("SELECT sku FROM capsules WHERE name = 'Peru Organic'").fetchone()['sku'] == '7012.20'
+        # …and a name both lines share gets each line's own sku, never the other's
+        names = "('Colombia', 'Kahawa Ya Congo')"
+        conn.execute(f"UPDATE capsules SET sku = '' WHERE name IN {names}")
+        conn.commit()
+        fill_empty_skus(conn)
+        got = {(r['name'], r['line']): r['sku'] for r in conn.execute(
+            f"SELECT name, line, sku FROM capsules WHERE name IN {names}")}
+        assert len(got) >= 4 and all(got.values()), got  # both lines present, all stamped
+        assert got[('Colombia', 'vertuo')] != got[('Colombia', 'original')], got
+        assert got[('Kahawa Ya Congo', 'vertuo')] != got[('Kahawa Ya Congo', 'original')], got
+
         # backup: export → wipe → import restores everything; a bad upload rolls back
         backup = export_data(conn)
         assert backup["capsules"] and backup["brews"], backup.keys()
@@ -1103,6 +1329,29 @@ def selftest() -> None:
             pass
         assert conn.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] == len(backup["capsules"]), \
             "failed import must not wipe the db"
+
+        # garbage Content-Length is a 400, not a server-side crash
+        h2 = Handler.__new__(Handler)
+        codes = []
+        h2._send = lambda code, *a, **k: codes.append(code)
+        h2.headers = {"Content-Length": "abc"}
+        try:
+            h2._body()
+            raise AssertionError("expected ConnectionError")
+        except ConnectionError:
+            pass
+        assert codes == [400], codes
+
+        # a client-chosen test target must stay on an ntfy host
+        assert ntfy_host_ok("https://ntfy.sh/topic") is None
+        assert ntfy_host_ok("https://sub.ntfy.sh/topic") is None
+        assert ntfy_host_ok("http://localhost:8080/topic") is None
+        for bad in ("http://192.168.0.1:443/", "https://evil.example/ntfy.sh", "http://localthost"):
+            try:
+                ntfy_host_ok(bad)
+                raise AssertionError(f"expected ValueError for {bad}")
+            except ValueError:
+                pass
 
         # ntfy reminders: nothing without a topic, one push per low-stock / upkeep
         # episode, deduped across checks, re-armed by restocking
@@ -1198,6 +1447,41 @@ def selftest() -> None:
         h._upsert_capsule(conn, {"name": "Test Kapsel", "family": "Lungo", "count": 1})
         assert conn.execute("SELECT line FROM capsules WHERE name='Test Kapsel'").fetchone()[0] \
             == "original"
+
+        # scanner catalogue: the diff is sku-first (store renames stay known), the hint is
+        # line-scoped, and the picker carries the remote entries
+        local = [{"name": "Arpeggio", "sku": "100", "line": "original", "family": "Espresso"}]
+        merged, new = merge_catalogue(local, [
+            {"name": "Arpeggio", "sku": "100", "line": "original", "family": "Espresso"},
+            {"name": "Arpeggio Extra", "sku": "100", "line": "original", "family": "Espresso"},
+            {"name": "Fresh Pod", "sku": "200", "line": "vertuo", "family": "mug"},
+            {"name": "Fresh Pod", "sku": "200", "line": "vertuo", "family": "Mug"},
+            {"name": "Gone Pod", "sku": "300", "line": "original", "family": "Espresso", "available": False},
+            {"name": "Arpeggio", "line": "original", "family": "lungo"},
+        ])
+        assert [e["name"] for e in merged] == ["Arpeggio", "Fresh Pod"], merged
+        assert [e["name"] for e in new] == ["Fresh Pod"] and new[0]["sku"] == "200"
+        # the two systems share capsule names: a same-name capsule of the other line is new
+        _m, new2 = merge_catalogue(
+            [{"name": "Colombia", "sku": "1", "line": "vertuo", "family": "Mug"}],
+            [{"name": "Colombia", "sku": "2", "line": "original", "family": "Espresso"}])
+        assert [e["name"] for e in new2] == ["Colombia"] and new2[0]["sku"] == "2", new2
+        assert new[0]["family"] == "Mug" and new[0]["line"] == "vertuo"  # normalised for the picker
+
+        _scanner_entries[:] = [
+            {"name": "Vertuo New", "sku": "v1", "line": "vertuo", "family": "Mug"},
+            {"name": "Original New", "sku": "o1", "line": "original", "family": "lungo"},
+        ]
+        st = current_state(conn)
+        assert [c["name"] for c in st["new_capsules"]] == ["Original New"], st["new_capsules"]
+        assert "Original New" in [k["name"] for k in st["known"]]
+        # a dead host keeps the last good data and raises nothing
+        global SCANNER_URL
+        old_url, SCANNER_URL = SCANNER_URL, "http://127.0.0.1:9/"
+        assert refresh_scanner()[0]["name"] == "Vertuo New"
+        SCANNER_URL = old_url
+        _scanner_entries.clear()
+        assert current_state(conn)["new_capsules"] == []
     print("selftest ok")
 
 
@@ -1219,6 +1503,8 @@ def main() -> None:
     conn = connect()
     init_db(conn)
     notify_async()  # catch up on reminders that came due while the server was down
+    if SCANNER_URL:
+        threading.Thread(target=scanner_daemon, daemon=True).start()
     server = Server((HOST, PORT), Handler)
     print(f"Nespresso stats → http://{HOST}:{PORT}  (db: {DB_PATH})")
     try:

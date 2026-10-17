@@ -64,6 +64,8 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
   (or your own photo URL; falls back to a drawn SVG if none), count,
   `+` / `−` buttons; drag a tile to reorder them.
 - `+` / `−` adjust stock; **Brew** lowers stock by 1 and logs a brew.
+- **Filter** box above the grid hides tiles whose name, cup size or notes don't
+  match (drag-to-reorder is off while a filter is active).
 - **Coffee stats**: brewed today / last 7 days, average per day, spend this
   month, a 12-week heatmap, most-brewed and per-family breakdowns, plus a
   burn-rate “~N days left” forecast for each capsule and for your whole stock.
@@ -75,8 +77,7 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
 - **Upkeep reminders** for cleaning (default every 10 days) and descaling
   (default every 90 days, both editable in the Machine dialog): a banner appears
   when one is due, and logging it adds a Cleaning/Descaling entry to the activity
-  list. **🧽 Cleaned** / **🧴 Descaled** log it in one tap; each button also shows
-  the days left until the next one (how many days late once overdue).
+  list. **🧽 Cleaned** / **🧴 Descaled** log it in one tap.
 - Add / edit / delete capsules, optionally prefilled from the known-capsule
   catalogue (`capsules.json`), with optional price per capsule and a 1–13 intensity
   shown as a scale on each tile.
@@ -118,6 +119,13 @@ the **Master Origins** single origins and a snapshot of the current **limited
 editions** (seeded with the ★ badge; seasons come and go, so delete the ones that
 are gone and add the new ones from the picker).
 
+Every catalogue entry carries the store's **sku**, the stable product id.
+Capsules are matched by sku first and name second, so a store rename — Nespresso
+renamed the Original range in 2026, *Ispirazione Firenze Arpeggio* is now
+*Arpeggio* — does not leave you with the same capsule twice. An existing database
+is migrated once on start: rows gain their sku and renamed rows are updated in
+place, keeping counts and brew history.
+
 **Why Original Line detection is coarser:** a Vertuo machine scans the pod's
 barcode and reports a cup size (`lastCoffeeFamilyID`), an Original machine has no
 barcode and reports at most *that* it is brewing. Its brew therefore arrives
@@ -129,11 +137,18 @@ from product photos, not sampled from a real pod — no capsule photos ship for
 that line yet. Identification by colour is only as good as those values, so swap
 in sampled ones when you add photos.
 
-### Stream Deck
+## New capsule hint
 
-A great addition if you want to trigger this dashboard from a Stream Deck:
-[`avpnusr/deckpresso`](https://github.com/avpnusr/deckpresso) — it can call
-`POST /api/brew-detected` with the exact capsule name.
+The dashboard also pulls the store's machine-readable catalogue from
+[nespresso-scanner](https://github.com/avpnusr/nespresso-scanner) (published
+twice a day) and shows a banner of capsules that are not in your local
+catalogue yet (`new_capsules` in `/api/state`, scoped to the machine's capsule
+line, diffed by `sku` — the store renames capsules). Tapping a name opens the
+add dialog pre-filled with the store's name, family, photo and price; dismissed
+names stay dismissed in that browser. `CATALOGUE_URL` overrides the URL and
+`CATALOGUE_URL=` (empty) switches the pull off for offline installs — the
+dashboard keeps working, this hint just stays quiet (a down host is ignored and
+the last good data is kept).
 
 ## Identifying a capsule from a photo
 
@@ -325,7 +340,7 @@ and reads its `language` field — drop the file in and it appears.
 | GET | `/api/languages` | — (available UI translations, `[{code, label}]`) |
 | GET | `/api/export` | — (full JSON backup of capsules, brews, settings) |
 | POST | `/api/import` | a `/api/export` backup — replaces all data |
-| POST | `/api/notify-test` | `{url?}` — send a test push to the configured ntfy topic |
+| POST | `/api/notify-test` | `{url?}` — test push; a client-chosen `url` must be `ntfy.sh` (https) or localhost, anything else tests the saved topic |
 | POST | `/api/capsules` | `{id?, name, family, color, image, notes, count, price, threshold, intensity, special}` (`special` = limited-edition ★) |
 | DELETE | `/api/capsules?id=N` | — |
 | POST | `/api/brew` | `{capsule_id, delta, log?, source?}` (delta `-1` = remove, `+1` = restock; `log:true` also records a brew, `source` defaults to `manual`) |
@@ -348,5 +363,5 @@ and reads its `language` field — drop the file in and it appears.
 - `static/manifest.webmanifest`, `static/icon-*.png` — PWA manifest and home-screen icons.
 - `static/i18n/*.json` — UI translations (one file per language, self-labelled).
 - `screenshot.png` — the dashboard picture above.
-- `capsules.json` — starter catalogue of the capsules you own (name, family,
-  colour, intensity, and a photo under `static/capsules/`).
+- `capsules.json` — starter catalogue of the capsules you own (name, sku,
+  family, colour, intensity, and a photo under `static/capsules/`).

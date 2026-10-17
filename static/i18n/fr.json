@@ -49,6 +49,8 @@
     "card.special": "Édition limitée",
     "field.known": "Capsule connue",
     "known.placeholder": "Pré-remplir depuis une capsule connue…",
+    "new.title": "Nouveautés du magasin Nespresso ({n})",
+    "new.note": "Un tap ouvre la boîte de dialogue d’ajout avec le nom, la taille, la photo et le prix du magasin.",
 
     "dialog.changeCapsule": "Changer de capsule",
     "field.whichCapsule": "De quelle capsule s'agissait-il ?",
@@ -78,6 +80,8 @@
     "card.delete": "Supprimer",
     "card.empty": "Aucune capsule pour l'instant — ajoutez-en une pour commencer.",
     "card.intensityTitle": "Intensité {n} sur 13",
+    "filter.placeholder": "Filtrer les capsules…",
+    "filter.none": "Aucune capsule ne correspond.",
 
     "kpi.today": "aujourd'hui",
     "kpi.week": "7 derniers jours",

@@ -2,6 +2,10 @@ name: docker
 
 on:
   push:
+    branches: [master]  # feature branches must not deploy over :latest
+    paths-ignore:
+      - 'README.md'
+      - '.github/workflows/docker.yml'
   workflow_dispatch:
 
 permissions:
@@ -9,8 +13,18 @@ permissions:
   packages: write
 
 jobs:
-  build:
+  selftest:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run selftest
+        run: python3 server.py --selftest
+
+  docker:
+    runs-on: ubuntu-latest
+    # Only deploy what passed the selftest, and only from master.
+    needs: selftest
+    if: github.ref == 'refs/heads/master'
     steps:
       - uses: actions/checkout@v7
 

@@ -49,6 +49,8 @@
     "card.special": "Limitierte Ausgabe",
     "field.known": "Bekannte Kapsel",
     "known.placeholder": "Aus bekannter Kapsel übernehmen…",
+    "new.title": "Neu im Nespresso-Shop ({n})",
+    "new.note": "Ein Tap öffnet das Add-Dialog mit den Shop-Daten (Name, Größe, Foto, Preis) vorbelegt.",
 
     "dialog.changeCapsule": "Kapsel ändern",
     "field.whichCapsule": "Welche Kapsel war es?",
@@ -78,6 +80,8 @@
     "card.delete": "Löschen",
     "card.empty": "Noch keine Kapseln – füge eine hinzu.",
     "card.intensityTitle": "Intensität {n} von 13",
+    "filter.placeholder": "Kapseln filtern…",
+    "filter.none": "Keine Kapsel passt zum Filter.",
 
     "kpi.today": "heute",
     "kpi.week": "letzte 7 Tage",
