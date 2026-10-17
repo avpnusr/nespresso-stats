@@ -9,3 +9,5 @@ data/*.db
 .DS_Store
 
 AGENTS.md
+data/*.db-shm
+data/*.db-wal

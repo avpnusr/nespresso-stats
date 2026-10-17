@@ -89,6 +89,7 @@
   @keyframes flash { 0% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
   #identify .row button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
   #lang-select, #theme-select { font: inherit; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; flex: none; }
+  #filter { font: inherit; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-width: 180px; }
   /* stats + reorder */
   .kpis { display: flex; gap: 14px; flex-wrap: wrap; margin: 4px 0 12px; }
   .reorder { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 12px; }
@@ -132,12 +133,14 @@
 <main>
   <div id="pending"></div>
   <div id="maintenance"></div>
+  <div id="new-capsules"></div>
 
   <div class="bar">
     <button class="primary" onclick="openEditor()" data-i18n="btn.add">+ Add capsule</button>
     <button onclick="pickPhoto()" data-i18n="btn.identify">📷 Identify from photo</button>
     <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
     <button class="ghost" onclick="openMachine()" data-i18n="btn.machine">⚙ Machine</button>
+    <input type="search" id="filter" data-i18n-ph="filter.placeholder" oninput="render()">
     <button class="ghost" id="btn-clean" onclick="logMaintenance('clean')">🧽 Cleaned</button>
     <button class="ghost" id="btn-descaled" onclick="logMaintenance('descale')">🧴 Descaled</button>
     <span class="empty" id="hint"></span>
@@ -168,6 +171,7 @@
       <select id="f-known"></select>
     </div>
     <input type="hidden" id="f-id">
+    <input type="hidden" id="f-sku">
     <label data-i18n="field.name">Capsule name</label><input id="f-name" required>
     <label data-i18n="field.family">Family</label><select id="f-family"></select>
     <label data-i18n="field.photo">Photo URL (optional)</label><input id="f-image" placeholder="https://…">
@@ -319,6 +323,7 @@ async function loadStrings() {
 function applyStatic() {
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll("[data-i18n-title]").forEach((el) => { el.title = t(el.dataset.i18nTitle); });
+  document.querySelectorAll("[data-i18n-ph]").forEach((el) => { el.placeholder = t(el.dataset.i18nPh); });
 }
 
 function buildLangSelect() {
@@ -374,6 +379,18 @@ function render() {
       </div></div>`;
   }).join("");
 
+  // New-capsule hint (from the nespresso-scanner catalogue): dismissed names stay dismissed
+  // in this browser.
+  const seen = new Set(JSON.parse(localStorage.getItem("newSkus") || "[]"));
+  const fresh = (state.new_capsules || []).filter((c) => c.sku && !seen.has(c.sku));
+  $("new-capsules").innerHTML = fresh.length ? `<div class="pending new"><h3>✨ ${esc(t("new.title", { n: fresh.length }))}</h3>
+    <div class="row">${fresh.map((c) => {
+      const i = (state.known || []).findIndex((k) => k.sku === c.sku);
+      return i >= 0 ? `<button onclick="addKnown(${i})">${esc(c.name)}</button>` : "";
+    }).join("")}
+      <button class="ghost" onclick="dismissNew()">${esc(t("action.ignore"))}</button></div>
+    <span class="empty">${esc(t("new.note"))}</span></div>` : "";
+
   $("f-family").innerHTML = state.families.map((f) => `<option>${esc(f)}</option>`).join("");
 
   // Upkeep countdown on the toolbar buttons, from the server's next-due timestamps.
@@ -387,8 +404,11 @@ function render() {
     el.innerHTML = esc(t(label)) + `<span class="cd ${cd.cls}">· ${esc(cd.text)}</span>`;
   }
 
-  $("grid").innerHTML = state.capsules.map((c) => `
-    <div class="card" id="cap-${c.id}" draggable="true">
+  const q = $("filter").value.trim().toLowerCase();
+  const shown = q ? state.capsules.filter((c) =>
+    [c.name, c.family, c.notes].some((f) => (f || "").toLowerCase().includes(q))) : state.capsules;
+  $("grid").innerHTML = shown.map((c) => `
+    <div class="card" id="cap-${c.id}" draggable="${q ? "false" : "true"}">
       <div class="capsule-art">${capsuleArt(c)}</div>
       <div>
         <div class="name">${esc(c.name)}${c.special ? ` <span title="${esc(t("card.special"))}" style="color: var(--accent)">★</span>` : ""}</div>
@@ -405,7 +425,7 @@ function render() {
         <button class="ghost" onclick="openEditorById(${c.id})">${esc(t("card.edit"))}</button>
         <button class="ghost danger" onclick="remove(${c.id})">${esc(t("card.delete"))}</button>
       </div>
-    </div>`).join("") || `<p class="empty">${esc(t("card.empty"))}</p>`;
+    </div>`).join("") || `<p class="empty">${esc(t(q ? "filter.none" : "card.empty"))}</p>`;
 
   renderStats();
   renderActivity();
@@ -526,6 +546,13 @@ function hint(msg) {
   setTimeout(() => { if ($("hint").textContent === msg) $("hint").textContent = ""; }, 4000);
 }
 
+function dismissNew() {
+  const set = new Set(JSON.parse(localStorage.getItem("newSkus") || "[]"));
+  (state.new_capsules || []).forEach((c) => c.sku && set.add(c.sku));
+  localStorage.setItem("newSkus", JSON.stringify([...set]));
+  render();
+}
+
 // ---------------------------------------------------------------- backup
 async function exportBackup() {
   const blob = new Blob([JSON.stringify(await api("/api/export"), null, 2)], { type: "application/json" });
@@ -604,6 +631,7 @@ function openEditorById(id) { openEditor(state.capsules.find((c) => c.id === id)
 function openEditor(c) {
   $("editor-title").textContent = t(c ? "dialog.edit" : "dialog.add");
   $("f-id").value = c?.id ?? "";
+  $("f-sku").value = c?.sku ?? "";
   $("f-name").value = c?.name ?? "";
   $("f-family").value = c?.family ?? state.families[0];
   $("f-image").value = c?.image ?? "";
@@ -627,17 +655,20 @@ $("f-known").addEventListener("change", (e) => {
   const k = (state.known || [])[e.target.value];
   if (!k) return;
   $("f-name").value = k.name;
+  $("f-sku").value = k.sku || "";  // the catalogue sku travels with the name, so a rename later still matches
   $("f-family").value = k.family;
   $("f-color").value = k.color || "#6b4f3a";
   $("f-image").value = k.image || "";
   $("f-intensity").value = k.intensity ?? 0;
   $("f-special").checked = !!k.special;  // a limited edition stays one when added from the catalogue
+  $("f-price").value = k.price ?? $("f-price").value;  // the scanner's entries carry the store price
 });
 $("editor-form").addEventListener("submit", async (e) => {
   if (e.submitter?.value !== "save") return;
   e.preventDefault();
   await api("/api/capsules", "POST", {
     id: $("f-id").value || undefined,
+    sku: $("f-sku").value,
     name: $("f-name").value, family: $("f-family").value,
     image: $("f-image").value, color: $("f-color").value,
     count: parseInt($("f-count").value, 10) || 0,
