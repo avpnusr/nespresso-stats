@@ -184,6 +184,13 @@ def init_db(conn: sqlite3.Connection, seed_path: Path = CATALOG) -> None:
               "intensity": c.get("intensity", 0),
               "special": 1 if c.get("special") else 0, "line": entry_line(c)} for c in seed],
         )
+    # A fresh seed (every count 0, no brews) gets the first-run stock-take; an install that
+    # already has stock or history is marked set up so the dialog never appears on upgrade.
+    if not conn.execute("SELECT 1 FROM settings WHERE key = 'setup_done'").fetchone() and (
+        conn.execute("SELECT 1 FROM capsules WHERE count > 0 LIMIT 1").fetchone()
+        or conn.execute("SELECT 1 FROM brews LIMIT 1").fetchone()
+    ):
+        conn.execute("INSERT INTO settings VALUES ('setup_done', '1')")
     conn.commit()
 
 
@@ -593,6 +600,33 @@ def set_capsule_order(conn, ids: list[int]) -> None:
     conn.commit()
 
 
+def save_setup(conn: sqlite3.Connection, counts: dict) -> dict:
+    """First-run stock-take: apply the counts the owner entered and drop the seed rows they
+    left at 0 (a row with brew history is kept). Ids not sent are left untouched."""
+    if not isinstance(counts, dict) or not counts:
+        raise ValueError("counts must be a non-empty object")
+    line = machine_line(conn)
+    own = {r["id"] for r in conn.execute("SELECT id FROM capsules WHERE line = ?", (line,))}
+    updated = removed = 0
+    for key, value in counts.items():
+        try:
+            cid, count = int(key), max(0, int(value or 0))
+        except (TypeError, ValueError):
+            continue
+        if cid not in own:
+            continue  # the dialog only lists the machine's own line
+        conn.execute("UPDATE capsules SET count = ? WHERE id = ?", (count, cid))
+        updated += 1
+        if count == 0 and not conn.execute(
+            "SELECT 1 FROM brews WHERE capsule_id = ? LIMIT 1", (cid,)
+        ).fetchone():
+            conn.execute("DELETE FROM capsules WHERE id = ?", (cid,))
+            removed += 1
+    conn.execute("INSERT OR REPLACE INTO settings VALUES ('setup_done', '1')")
+    conn.commit()
+    return {"ok": True, "updated": updated, "removed": removed}
+
+
 def log_maintenance(conn, task: str) -> dict:
     """Record a cleaning/descaling. Logged as an event (delta 0) so it shows in activity."""
     if task not in MAINTENANCE:
@@ -745,6 +779,9 @@ def import_data(conn: sqlite3.Connection, data: dict) -> dict:
                     f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(':' + k for k in cols)})",
                     cols,
                 )
+        # An imported backup is an existing install — never ask it to run the first-run wizard.
+        if not conn.execute("SELECT 1 FROM settings WHERE key='setup_done'").fetchone():
+            conn.execute("INSERT INTO settings VALUES ('setup_done', '1')")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1008,6 +1045,8 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == "/api/order":
                 set_capsule_order(conn, payload["ids"])
                 self._send(200, {"ok": True})
+            elif url.path == "/api/setup":
+                self._send(200, save_setup(conn, payload.get("counts")))
             elif url.path == "/api/maintenance":
                 self._send(200, log_maintenance(conn, payload.get("task")))
             elif url.path == "/api/import":
@@ -1109,6 +1148,8 @@ def selftest() -> None:
         conn = connect(Path(tmp) / "t.db")
         init_db(conn, CATALOG)
         assert conn.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] > 0
+        # a fresh seed is not "set up": the first-run stock-take dialog must open
+        assert not conn.execute("SELECT 1 FROM settings WHERE key='setup_done'").fetchone()
         # a catalogue entry without a sku falls back to name matching — that is the delisted-
         # capsule blind spot, so every seed entry must carry one. Duplicates would make one
         # capsule look owned twice (sku is the identity), so catch those here too.
@@ -1293,6 +1334,34 @@ def selftest() -> None:
         # migration is idempotent on an already-migrated db
         migrate(conn)
 
+        # first-run stock-take: entered counts land, seed rows left at 0 are dropped (a row
+        # with brew history is kept), and the install is marked set up
+        setup_conn = connect(Path(tmp) / "setup.db")
+        init_db(setup_conn, CATALOG)
+        assert not setup_conn.execute("SELECT 1 FROM settings WHERE key='setup_done'").fetchone()
+        ids = [r[0] for r in setup_conn.execute("SELECT id FROM capsules WHERE line='vertuo'")]
+        keep, brewed = ids[0], ids[1]
+        log_brew(setup_conn, brewed, "Mug", "manual")
+        setup_conn.commit()
+        res = save_setup(setup_conn, {str(keep): 7, **{str(i): 0 for i in ids[1:]}})
+        assert res["updated"] == len(ids) and res["removed"] == len(ids) - 2, res
+        assert setup_conn.execute("SELECT count FROM capsules WHERE id=?", (keep,)).fetchone()[0] == 7
+        assert setup_conn.execute("SELECT 1 FROM capsules WHERE id=?", (brewed,)).fetchone()
+        assert setup_conn.execute("SELECT value FROM settings WHERE key='setup_done'").fetchone()[0] == "1"
+        try:
+            save_setup(setup_conn, {})  # an empty payload must not mark an untouched seed done
+            raise AssertionError("expected ValueError for empty counts")
+        except ValueError:
+            pass
+        # an upgrade with stock already entered is set up on start instead of being asked
+        upgrade = connect(Path(tmp) / "upgrade.db")
+        init_db(upgrade, CATALOG)
+        upgrade.execute("DELETE FROM settings WHERE key='setup_done'")
+        upgrade.execute("UPDATE capsules SET count = 3 WHERE id = (SELECT MIN(id) FROM capsules)")
+        upgrade.commit()
+        init_db(upgrade, CATALOG)
+        assert upgrade.execute("SELECT value FROM settings WHERE key='setup_done'").fetchone()[0] == "1"
+
         # a sku the catalogue added after the install launched lands on a blank row at startup
         conn.execute("UPDATE capsules SET sku = '' WHERE name = 'Peru Organic'")
         conn.commit()
@@ -1317,6 +1386,8 @@ def selftest() -> None:
         assert import_data(conn, backup)["capsules"] == len(backup["capsules"])
         assert conn.execute("SELECT COUNT(*) FROM brews").fetchone()[0] == len(backup["brews"])
         assert conn.execute("SELECT value FROM settings WHERE key='sleeve_size'").fetchone()[0] == "10"
+        # restoring a pre-feature backup must not trigger the first-run wizard either
+        assert conn.execute("SELECT value FROM settings WHERE key='setup_done'").fetchone()[0] == "1"
         try:
             import_data(conn, {"capsules": []})  # not a backup (no brews/settings)
             raise AssertionError("expected ValueError for non-backup")

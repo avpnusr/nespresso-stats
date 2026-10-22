@@ -18,7 +18,9 @@ python3 server.py --selftest
 ```
 
 Data lives in `data/nespresso.db` (SQLite). The first run seeds a starter
-catalogue from `capsules.json`; edit or delete those rows freely.
+catalogue from `capsules.json` and opens a **stock-take**: enter how many of
+each capsule you have, and capsules left at 0 are removed from your inventory
+(add them back later from the capsule picker). Edit or delete the rows freely.
 
 - `PORT=9000 HOST=0.0.0.0 python3 server.py` to expose it on your LAN. The server
   has **no login** — it is built for a trusted home network. Expose it to the
@@ -60,6 +62,9 @@ Set them to match your host; `./data` is chowned to match on start.
 ![The Nespresso Stats dashboard: capsule tiles with counts, prices and an intensity
 scale, plus the coffee stats and recent activity lists](screenshot.png)
 
+- **First-run stock-take**: the seeded catalogue starts empty, so on first use a
+  dialog asks how many of each capsule you have; anything left at 0 is removed
+  and the grid starts with only your capsules (re-add them from the picker).
 - Capsule cards grouped by cup size, each with the capsule's photo
   (or your own photo URL; falls back to a drawn SVG if none), count,
   `+` / `−` buttons; drag a tile to reorder them.

@@ -77,6 +77,11 @@
   dialog .check { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 13px; color: var(--muted); cursor: pointer; }
   dialog .check input { width: auto; margin: 0; }
   dialog menu { display: flex; gap: 8px; justify-content: flex-end; margin: 18px 0 0; padding: 0; }
+  /* First-run stock-take: one compact row per capsule, scrollable. */
+  dialog#setup-dialog { width: min(760px, 94vw); }
+  .setup-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 16px; max-height: 55vh; overflow: auto; margin: 12px 0; }
+  .setup-list label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0; color: var(--text); }
+  .setup-list input { width: 68px; padding: 6px; }
   section h2 { font-size: 17px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin: 34px 0 12px; }
   .brews { display: flex; flex-direction: column; gap: 6px; }
   .brew { display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 14px; }
@@ -208,6 +213,15 @@
       <input type="file" id="restore-input" accept="application/json,.json" hidden>
     </div>
     <menu><button value="cancel" class="ghost" formnovalidate data-i18n="action.cancel">Cancel</button><button class="primary" value="save" data-i18n="action.save">Save</button></menu>
+  </form>
+</dialog>
+
+<dialog id="setup-dialog">
+  <form method="dialog" id="setup-form">
+    <h3 data-i18n="setup.title">Set up your shelf</h3>
+    <p class="empty" data-i18n="setup.intro"></p>
+    <div id="setup-list" class="setup-list"></div>
+    <menu><button value="cancel" class="ghost" formnovalidate data-i18n="action.cancel">Cancel</button><button class="primary" value="save" data-i18n="setup.save">Save stock</button></menu>
   </form>
 </dialog>
 
@@ -816,6 +830,27 @@ $("machine-form").addEventListener("submit", async (e) => {
   await load();
 });
 
+// First-run stock-take: the seeded catalogue ships every capsule at count 0. Enter what
+// you actually have; rows left at 0 are deleted server-side, so the dashboard starts clean.
+function openSetup() {
+  $("setup-list").innerHTML = state.capsules.map((c) => `
+    <label><span>${esc(c.name)} <span class="fam">${esc(c.family)}</span></span>
+      <input type="number" min="0" value="${c.count}" data-id="${c.id}" aria-label="${esc(c.name)}"></label>`).join("");
+  $("setup-dialog").showModal();
+}
+$("setup-form").addEventListener("submit", async (e) => {
+  if (e.submitter?.value !== "save") return;
+  e.preventDefault();
+  const counts = {};
+  $("setup-list").querySelectorAll("input").forEach((el) => {
+    counts[el.dataset.id] = parseInt(el.value, 10) || 0;
+  });
+  await api("/api/setup", "POST", { counts });
+  $("setup-dialog").close();
+  await load();
+  hint(t("setup.saved"));
+});
+
 async function testNotify() {
   const res = await api("/api/notify-test", "POST", { url: $("m-ntfy").value.trim() });
   alert(res.error ? `${t("notify.testFailed")} ${res.error}` : t("notify.sent"));
@@ -831,6 +866,7 @@ async function testNotify() {
   buildLangSelect();
   applyStatic();
   await load();
+  if (!state.machine.setup_done) openSetup();
 })();
 
 function dragOrder() {

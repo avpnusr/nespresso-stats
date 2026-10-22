@@ -141,6 +141,11 @@
     "backup.restore": "Backup wiederherstellen…",
     "confirm.restore": "Dieses Backup wiederherstellen? Die aktuellen Daten werden ersetzt.",
     "backup.restored": "Backup wiederhergestellt.",
-    "backup.invalid": "Das sieht nicht nach einer Backup-Datei aus."
+    "backup.invalid": "Das sieht nicht nach einer Backup-Datei aus.",
+
+    "setup.title": "Regal einrichten",
+    "setup.intro": "Trag ein, wie viele Kapseln du von jeder Sorte hast. Sorten mit 0 werden aus deinem Bestand entfernt – du kannst sie später über die Kapselauswahl wieder hinzufügen. Alles auf 0 lassen, um leer zu starten.",
+    "setup.save": "Bestand speichern",
+    "setup.saved": "Bestand gespeichert."
   }
 }

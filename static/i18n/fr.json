@@ -141,6 +141,11 @@
     "backup.restore": "Restaurer une sauvegarde…",
     "confirm.restore": "Restaurer cette sauvegarde ? Vos données actuelles seront remplacées.",
     "backup.restored": "Sauvegarde restaurée.",
-    "backup.invalid": "Cela ne ressemble pas à un fichier de sauvegarde."
+    "backup.invalid": "Cela ne ressemble pas à un fichier de sauvegarde.",
+
+    "setup.title": "Configurez votre réserve",
+    "setup.intro": "Indiquez combien de capsules vous avez de chaque variété. Les variétés à 0 sont retirées de votre stock — vous pourrez les rajouter plus tard depuis le sélecteur de capsules. Laissez tout à 0 pour démarrer vide.",
+    "setup.save": "Enregistrer le stock",
+    "setup.saved": "Stock enregistré."
   }
 }

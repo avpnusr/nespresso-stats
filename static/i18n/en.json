@@ -141,6 +141,11 @@
     "backup.restore": "Restore backup…",
     "confirm.restore": "Restore this backup? Your current data will be replaced.",
     "backup.restored": "Backup restored.",
-    "backup.invalid": "That doesn't look like a backup file."
+    "backup.invalid": "That doesn't look like a backup file.",
+
+    "setup.title": "Set up your shelf",
+    "setup.intro": "Enter how many of each capsule you have. Capsules left at 0 are removed from your inventory — you can add them back later from the capsule picker. Leave everything at 0 to start empty.",
+    "setup.save": "Save stock",
+    "setup.saved": "Stock saved."
   }
 }
