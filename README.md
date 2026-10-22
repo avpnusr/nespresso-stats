@@ -109,8 +109,14 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
   ntfy.sh or self-hosted — in the Machine dialog and test it with *Send test*. Whenever
   stock or upkeep changes, the server pushes “running low” and “cleaning/descaling due”
   reminders, at most once per episode (restocking or logging the task re-arms them).
-  Works even if nobody opens the dashboard; it also catches up at startup.
-
+  Works even if nobody opens the dashboard; it also catches up at startup. A catalogue
+  pull that turns up genuinely new capsules for the machine's line pushes once,
+  too — the first check after an upgrade baselines the whole store silently, so only
+  releases from then on are announced.
+- **Price watch**: a capsule's tile shows the store's current price when it moved away
+  from the price you paid (matched by `sku`, scoped to the machine's line — `store_price`
+  on the capsule in `/api/state`). ↓ the store is cheaper now, ↑ it went up. The price you
+  paid is not changed, so the spend KPIs stay what you actually spent.
 ## Vertuo or Original Line
 
 The dashboard runs **one machine at a time**. Pick its capsule system under
@@ -161,7 +167,9 @@ twice a day) and shows a banner of capsules that are not in your local
 catalogue yet (`new_capsules` in `/api/state`, scoped to the machine's capsule
 line, diffed by `sku` — the store renames capsules). Tapping a name opens the
 add dialog pre-filled with the store's name, family, photo and price; dismissed
-names stay dismissed in that browser. `CATALOGUE_URL` overrides the URL and
+names stay dismissed in that browser. When a pull finds such capsules and a
+push topic is configured, the server also announces them once (machine's line,
+newest at the top of the banner). `CATALOGUE_URL` overrides the URL and
 `CATALOGUE_URL=` (empty) switches the pull off for offline installs — the
 dashboard keeps working, this hint just stays quiet (a down host is ignored and
 the last good data is kept).
@@ -351,7 +359,7 @@ and reads its `language` field — drop the file in and it appears.
 
 | Method | Path | Body |
 | --- | --- | --- |
-| GET | `/api/state` | — (`capsules`, `brews`, `pending`, `maintenance`, `machine`, `families`, and `known` — catalogue capsules not in your inventory, used to prefill the add dialog; `machine.ntfy_url` is masked) |
+| GET | `/api/state` | — (`capsules`, `brews`, `pending`, `maintenance`, `machine`, `families`, and `known` — catalogue capsules not in your inventory, used to prefill the add dialog; `machine.ntfy_url` is masked; capsules can carry `store_price` when the store's current price moved, see Price watch) |
 | GET | `/api/stats` | — (raw brew/restock events for the stats view, scoped to the machine's line) |
 | GET | `/api/languages` | — (available UI translations, `[{code, label}]`) |
 | GET | `/api/export` | — (full JSON backup of capsules, brews, settings) |

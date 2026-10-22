@@ -61,6 +61,7 @@
   .use { color: var(--muted); font-size: 11px; }
   .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; }
   .cost { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .cost.deal { color: var(--accent); }
   .intensity { display: flex; align-items: center; gap: 6px; }
   .intensity .scale { display: inline-flex; gap: 2px; }
   .intensity .scale i { width: 5px; height: 10px; border-radius: 2px; background: var(--line); }
@@ -282,7 +283,12 @@ const capsuleArt = (c) => {
 const intensityBar = (c) => c.intensity
   ? `<span class="intensity" title="${esc(t("card.intensityTitle", { n: c.intensity }))}"><span class="scale">${Array.from({ length: 13 }, (_, i) => `<i class="${i < c.intensity ? "on" : ""}"></i>`).join("")}</span><b>${c.intensity}</b></span>`
   : "";
-const costLabel = (c) => c.price > 0 ? `<span class="cost">€${c.price.toFixed(2)}/cap</span>` : "";
+const costLabel = (c) => c.price > 0
+  ? `<span class="cost">€${c.price.toFixed(2)}/cap</span>`
+    + (c.store_price != null
+      ? ` <span class="cost deal" title="${esc(t("card.priceChange", { p: c.store_price.toFixed(2), old: c.price.toFixed(2) }))}">${c.store_price < c.price ? "↓" : "↑"} €${c.store_price.toFixed(2)}</span>`
+      : "")
+  : "";
 function capsuleSVG(color) {
   return `<svg viewBox="0 0 60 96" width="60" height="96" aria-hidden="true">
     <path d="M10 22 h40 l-5 62 a6 6 0 0 1 -6 6 h-18 a6 6 0 0 1 -6 -6 z" fill="${color}"/>

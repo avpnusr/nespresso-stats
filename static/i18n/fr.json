@@ -80,6 +80,7 @@
     "card.delete": "Supprimer",
     "card.deleteBlocked": "Cette capsule a un historique de préparation, elle ne peut pas être supprimée. Mettez plutôt sa quantité à 0.",
     "card.usage": "{n}× préparée",
+    "card.priceChange": "Maintenant €{p} au magasin (vous avez payé €{old})",
     "card.lastBrewed": "il y a {days} j",
     "card.empty": "Aucune capsule pour l'instant — ajoutez-en une pour commencer.",
     "card.intensityTitle": "Intensité {n} sur 13",

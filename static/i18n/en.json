@@ -80,6 +80,7 @@
     "card.delete": "Delete",
     "card.deleteBlocked": "This capsule has brew history, so it can't be deleted. Set its count to 0 instead.",
     "card.usage": "{n}× brewed",
+    "card.priceChange": "Now €{p} at the store (you paid €{old})",
     "card.lastBrewed": "last {days}d ago",
     "card.empty": "No capsules yet — add one to get started.",
     "card.intensityTitle": "Intensity {n} of 13",

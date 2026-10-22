@@ -805,6 +805,43 @@ def notify_check(conn: sqlite3.Connection, send=None) -> None:
     conn.commit()
 
 
+def notify_new_capsules(conn, entries: list[dict] | None = None, send=None) -> None:
+    """One push when a scanner pull turned up capsules the owner does not have yet, on the
+    machine's line (same rule as the dashboard's banner — and one push total, the banner
+    lists them all on the next visit). Announced identities live in `notified_new`, never
+    pruned: a delisted capsule must not re-announce when the store relists it. The very
+    first check silently takes the whole current diff as read — an upgraded install must
+    not announce the entire store; only things from then on are new."""
+    line = machine_line(conn)
+    keyed = {((c.get("sku") or "").strip() or "name:" + (c["name"] or "").strip().lower()): c
+             for c in new_for_line(conn, line, entries)}
+    stored = get_setting(conn, "notified_new", None)
+    if stored is None:
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('notified_new', ?)",
+                     (",".join(keyed),))
+        conn.commit()
+        return
+    announced = {x for x in stored.split(",") if x}
+    todo = [k for k in keyed if k not in announced]
+    if not todo:
+        return
+    url = get_setting(conn, "ntfy_url")
+    if todo and url:
+        send = send or ntfy_send
+        names = [keyed[k]["name"] or keyed[k]["sku"] for k in todo]
+        msg = f"New {LINE_LABELS[line]} capsules in the store: " + ", ".join(names[:4])
+        if len(names) > 4:
+            msg += f" …and {len(names) - 4} more"
+        err = send(url, msg, title="Nespresso - new capsules")
+        if err:
+            # same as the other episodes: a retry storm is worse — the dashboard's
+            # banner still shows them
+            print(f"notify failed: {err}", file=sys.stderr)
+    conn.execute("INSERT OR REPLACE INTO settings VALUES ('notified_new', ?)",
+                 (",".join(sorted(announced | set(todo))),))
+    conn.commit()
+
+
 _notify_lock = threading.Lock()
 
 
@@ -919,10 +956,16 @@ def refresh_scanner() -> list[dict]:
 
 def scanner_daemon() -> None:
     """Refresh at startup and every 6 h (the scanner publishes twice a day). Runs off
-    the request path so /api/state is never blocked on the network."""
+    the request path so /api/state is never blocked on the network. A pull that turned
+    up genuinely new capsules for the machine's line triggers the ntfy push."""
     tick = threading.Event()
     while True:
         refresh_scanner()
+        if remote_entries():
+            try:
+                notify_new_capsules(connect())  # own connection: different thread
+            except Exception as err:  # noqa: BLE001 - notifications are best-effort
+                print(f"notify failed: {err}", file=sys.stderr)
         tick.wait(6 * 3600)
 
 
@@ -967,6 +1010,19 @@ def known_catalogue() -> list[dict]:
     return merge_catalogue(local_catalogue(), remote_entries())[0]
 
 
+def new_for_line(conn, line: str, entries: list[dict] | None = None) -> list[dict]:
+    """Remote-only catalogue entries the owner does not have yet (line-scoped) — the
+    dashboard's "new capsules" banner and, on a scanner pull, the ntfy push. Ownership is
+    sku when both sides have one, the name otherwise (same rule as picked `known`)."""
+    remote = remote_entries() if entries is None else entries
+    owned_skus = {r["sku"] for r in conn.execute("SELECT sku FROM capsules") if r["sku"]}
+    owned_names = {r["name"].strip().lower() for r in conn.execute("SELECT name FROM capsules")}
+    _, new = merge_catalogue(local_catalogue(), remote)
+    return [c for c in new if entry_line(c) == line
+            and not ((c.get("sku") or "").strip() in owned_skus
+                     or (c.get("name") or "").strip().lower() in owned_names)]
+
+
 def current_state(conn) -> dict:
     machine = {r["key"]: r["value"] for r in conn.execute("SELECT * FROM settings")}
     machine["ntfy_url"] = mask_ntfy(machine.get("ntfy_url", ""))  # topic stays server-side
@@ -985,10 +1041,30 @@ def current_state(conn) -> dict:
         return (bool(sku) and sku in owned_skus) \
             or c.get("name", "").strip().lower() in owned_names
 
-    merged, scanner_new = merge_catalogue(local_catalogue(), remote_entries())
+    merged, _ = merge_catalogue(local_catalogue(), remote_entries())
     known = [c for c in merged if entry_line(c) == line and not owned(c)]
-    # New-capsule hint: remote-only entries the owner does not have yet (line-scoped).
-    new_capsules = [c for c in scanner_new if entry_line(c) == line and not owned(c)]
+    new_capsules = new_for_line(conn, line)
+    # Price watch: what the store currently asks for a stocked capsule (sku match,
+    # line-scoped). The card shows a badge when it moved away from the price the owner paid.
+    store_prices = {}
+    for e in remote_entries():
+        sku = (e.get("sku") or "").strip()
+        if not sku or entry_line(e) != line:
+            continue
+        try:
+            p = float(e.get("price"))
+        except (TypeError, ValueError):
+            continue
+        if p > 0:
+            store_prices[sku] = p
+    for c in capsules:
+        try:
+            paid = float(c["price"])  # import_data trusts column shape, not value shape
+        except (TypeError, ValueError):
+            continue
+        store = store_prices.get((c["sku"] or "").strip())
+        if paid > 0 and store and abs(store - paid) > 0.005:
+            c["store_price"] = store
     # Manual drag order wins; anything unlisted (new capsule) keeps family/name order at the end.
     order = [int(x) for x in machine.get("capsule_order", "").split(",") if x]
     pos = {cid: i for i, cid in enumerate(order)}
@@ -1778,6 +1854,47 @@ def selftest() -> None:
         old_url, SCANNER_URL = SCANNER_URL, "http://127.0.0.1:9/"
         assert refresh_scanner()[0]["name"] == "Vertuo New"
         SCANNER_URL = old_url
+
+        # price watch: the store's current price reaches /api/state on a sku match of the
+        # machine's line — but only when it moved away from the price the owner paid
+        _scanner_entries[:] = [
+            {"name": "Melozio", "sku": "7005.20", "line": "vertuo", "family": "Mug", "price": "3.99"},
+            {"name": "Other Line Deal", "sku": "o0", "line": "original", "family": "Lungo", "price": "9.99"},
+        ]
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'vertuo')")
+        conn.execute("UPDATE capsules SET price = 0.5 WHERE name = 'Melozio'")
+        conn.commit()
+        by_name = {c["name"]: c for c in current_state(conn)["capsules"]}
+        assert by_name["Melozio"]["store_price"] == 3.99, by_name["Melozio"]
+        conn.execute("UPDATE capsules SET price = 3.99 WHERE name = 'Melozio'")
+        conn.commit()
+        by_name = {c["name"]: c for c in current_state(conn)["capsules"]}
+        assert "store_price" not in by_name["Melozio"], by_name["Melozio"]
+
+        # new-capsule push: the first ever check silently baselines the current store diff
+        # (an upgraded install must not announce the whole shelf), then each genuinely new
+        # capsule of the machine's line is announced once — no repeats, other line stays out
+        conn.execute("DELETE FROM settings WHERE key = 'notified_new'")
+        sent = []
+        record_new = lambda url, msg, title="": sent.append(msg)
+        notify_new_capsules(conn, entries=[
+            {"name": "Vertuo A", "sku": "v1", "line": "vertuo", "family": "Mug"},
+            {"name": "Original New", "sku": "o1", "line": "original", "family": "Lungo"},
+        ], send=record_new)
+        assert not sent, sent  # silent baseline
+        assert get_setting(conn, "notified_new") == "v1", get_setting(conn, "notified_new")
+        pull2 = [{"name": "Vertuo B", "sku": "v2", "line": "vertuo", "family": "Mug"},
+                 {"name": "Original B", "sku": "o2", "line": "original", "family": "Lungo"}]
+        notify_new_capsules(conn, entries=pull2, send=record_new)
+        assert len(sent) == 1 and "Vertuo B" in sent[0] and "Original B" not in sent[0], sent
+        n = len(sent)
+        notify_new_capsules(conn, entries=pull2, send=record_new)
+        assert len(sent) == n, sent  # no repeat for the same capsule
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'original')")
+        notify_new_capsules(conn, entries=pull2, send=record_new)
+        assert len(sent) == n + 1 and all(x in sent[-1] for x in ("Original", "B")), sent
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'vertuo')")
+
         _scanner_entries.clear()
         assert current_state(conn)["new_capsules"] == []
     print("selftest ok")

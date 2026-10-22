@@ -80,6 +80,7 @@
     "card.delete": "Löschen",
     "card.deleteBlocked": "Diese Kapsel hat Brüh-Historie und kann nicht gelöscht werden. Setze die Anzahl stattdessen auf 0.",
     "card.usage": "{n}× gebrüht",
+    "card.priceChange": "Im Shop kostet sie jetzt €{p} (du hast €{old} bezahlt)",
     "card.lastBrewed": "zuletzt vor {days} T.",
     "card.empty": "Noch keine Kapseln – füge eine hinzu.",
     "card.intensityTitle": "Intensität {n} von 13",
