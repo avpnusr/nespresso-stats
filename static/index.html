@@ -58,6 +58,7 @@
   .capsule-art img { max-height: 108px; max-width: 100%; object-fit: contain; }
   .name { font-weight: 600; }
   .fam { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .use { color: var(--muted); font-size: 11px; }
   .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; }
   .cost { color: var(--muted); font-size: 13px; white-space: nowrap; }
   .intensity { display: flex; align-items: center; gap: 6px; }
@@ -206,6 +207,8 @@
       <input id="m-ntfy" placeholder="https://ntfy.sh/my-topic" style="flex:1">
       <button type="button" class="ghost" style="white-space:nowrap" onclick="testNotify()" data-i18n="btn.testNotify">Send test</button>
     </div>
+    <div class="sub" data-i18n="setup.title" style="margin-top:16px">Stock-take</div>
+    <button type="button" class="ghost" onclick="stocktake()" data-i18n="btn.stocktake">📋 Count every capsule</button>
     <div class="sub" data-i18n="backup.title" style="margin-top:16px">Backup</div>
     <div style="display:flex; gap:8px; flex-wrap:wrap">
       <button type="button" class="ghost" onclick="exportBackup()" data-i18n="backup.export">💾 Export backup</button>
@@ -329,7 +332,9 @@ const sourceLabel = (s) => ["auto", "manual", "restock"].includes(s) ? t("source
 async function loadStrings() {
   const codes = lang === "en" ? ["en"] : ["en", lang];
   await Promise.all(codes.map(async (code) => {
-    const res = await fetch(`/static/i18n/${code}.json`);
+    // no-cache: /static is cached for an hour, so after a deploy a browser would keep the old
+    // strings and t() would render raw keys ("card.usage"). A few kB, revalidated per load.
+    const res = await fetch(`/static/i18n/${code}.json`, { cache: "no-cache" });
     if (res.ok) I18N[code] = (await res.json()).strings || {};
   }));
 }
@@ -419,6 +424,21 @@ function render() {
   }
 
   const q = $("filter").value.trim().toLowerCase();
+  // How often each capsule was brewed and when last: the whole history is already here.
+  const used = new Map();
+  for (const b of stats) {
+    if (b.delta < 0 && b.capsule_id != null) {
+      const u = used.get(b.capsule_id);
+      if (u) u.n += 1; else used.set(b.capsule_id, { n: 1, last: b.ts });
+    }
+  }
+  const usage = (c) => {
+    const u = used.get(c.id);
+    if (!u) return "";
+    const d = daysAgo(u.last);
+    return `<div class="use">${esc(t("card.usage", { n: u.n }))} · `
+      + `${esc(d === 0 ? t("kpi.today") : t("card.lastBrewed", { days: d }))}</div>`;
+  };
   const shown = q ? state.capsules.filter((c) =>
     [c.name, c.family, c.notes].some((f) => (f || "").toLowerCase().includes(q))) : state.capsules;
   $("grid").innerHTML = shown.map((c) => `
@@ -427,6 +447,7 @@ function render() {
       <div>
         <div class="name">${esc(c.name)}${c.special ? ` <span title="${esc(t("card.special"))}" style="color: var(--accent)">★</span>` : ""}</div>
         <div class="fam">${esc(c.family)}</div>
+        ${usage(c)}
       </div>
       <div class="meta">${intensityBar(c)}${costLabel(c)}</div>
       <div class="count ${isLow(c) ? "low" : ""}">
@@ -619,7 +640,9 @@ async function resolve(capsule_id, brew_id) { await api("/api/resolve", "POST", 
 async function dismiss(brew_id) { await api("/api/dismiss", "POST", { brew_id }); await load(); }
 async function remove(id) {
   if (!confirm(t("confirm.delete"))) return;
-  await fetch(`/api/capsules?id=${id}`, { method: "DELETE" });
+  // A capsule with brew history is refused (409): its brews would lose their name and price.
+  const res = await fetch(`/api/capsules?id=${id}`, { method: "DELETE" });
+  if (!res.ok) { hint(t("card.deleteBlocked")); return; }
   await load();
 }
 
@@ -817,15 +840,17 @@ function openMachine() {
 $("machine-form").addEventListener("submit", async (e) => {
   if (e.submitter?.value !== "save") return;
   e.preventDefault();
-  await api("/api/settings", "POST", {
+  const payload = {
     machine_name: $("m-name").value, machine_model: $("m-model").value,
     machine_image: $("m-image").value,
     machine_line: $("m-line").value,
     sleeve_size: parseInt($("m-sleeve").value, 10) || 10,
     clean_days: parseInt($("m-clean").value, 10) || 10,
     descale_days: parseInt($("m-descale").value, 10) || 90,
-    ntfy_url: $("m-ntfy").value.trim(),
-  });
+  };
+  const topic = ntfyFieldValue();
+  if (topic !== null) payload.ntfy_url = topic;  // untouched mask must not overwrite the topic
+  await api("/api/settings", "POST", payload);
   $("machine-dialog").close();
   await load();
 });
@@ -837,6 +862,13 @@ function openSetup() {
     <label><span>${esc(c.name)} <span class="fam">${esc(c.family)}</span></span>
       <input type="number" min="0" value="${c.count}" data-id="${c.id}" aria-label="${esc(c.name)}"></label>`).join("");
   $("setup-dialog").showModal();
+}
+
+// Re-run the same stock-take later: a delivery landed, or you counted the shelf.
+// It prefills the current counts, so only capsules you change are touched.
+function stocktake() {
+  $("machine-dialog").close();
+  openSetup();
 }
 $("setup-form").addEventListener("submit", async (e) => {
   if (e.submitter?.value !== "save") return;
@@ -851,8 +883,17 @@ $("setup-form").addEventListener("submit", async (e) => {
   hint(t("setup.saved"));
 });
 
+// The server hands out the topic masked ("https://ntfy.sh/•••"): the topic is a secret.
+// Returns null while the field still holds that mask (leave the stored topic alone), "" when
+// the owner cleared it, and the typed URL otherwise.
+function ntfyFieldValue() {
+  const v = $("m-ntfy").value.trim();
+  return v === (state.machine.ntfy_url || "") ? null : v;
+}
+
 async function testNotify() {
-  const res = await api("/api/notify-test", "POST", { url: $("m-ntfy").value.trim() });
+  // Untouched field = the mask: test the stored topic instead of the mask text.
+  const res = await api("/api/notify-test", "POST", { url: ntfyFieldValue() ?? "" });
   alert(res.error ? `${t("notify.testFailed")} ${res.error}` : t("notify.sent"));
 }
 

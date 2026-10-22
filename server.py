@@ -400,9 +400,29 @@ def set_brew_capsule(conn, brew_id: int, capsule_id: int) -> dict:
     return {"action": "reassigned"}
 
 
+def delete_capsule(conn, capsule_id: int) -> dict:
+    """Deleting a capsule that has brew history would orphan those rows: the activity list
+    loses the name and the spend KPI the price. Same rule as the stock-take — a capsule you
+    have used is retired by setting its count to 0."""
+    if not conn.execute("SELECT 1 FROM capsules WHERE id = ?", (capsule_id,)).fetchone():
+        raise ValueError("capsule not found")
+    if conn.execute("SELECT 1 FROM brews WHERE capsule_id = ? LIMIT 1", (capsule_id,)).fetchone():
+        raise ValueError("capsule has brew history: set its count to 0 instead of deleting it")
+    conn.execute("DELETE FROM capsules WHERE id = ?", (capsule_id,))
+    conn.commit()
+    return {"ok": True}
+
+
 def brew_stats(conn) -> dict:
-    """Raw consumption events for the client to aggregate (timezone-local)."""
-    rows = conn.execute("SELECT ts, capsule_id, delta FROM brews ORDER BY id DESC LIMIT 5000")
+    """Raw consumption events for the client to aggregate (timezone-local), scoped to the
+    machine's line — the other line's history must not feed this machine's days-left or
+    average. A brew that never named a capsule (unknown brew) counts for the line in use;
+    one orphaned by a pre-2026 deletion has no line at all and stays out."""
+    rows = conn.execute(
+        """SELECT b.ts, b.capsule_id, b.delta FROM brews b
+           LEFT JOIN capsules c ON c.id = b.capsule_id
+           WHERE b.capsule_id IS NULL OR c.line = ?
+           ORDER BY b.id DESC LIMIT 5000""", (machine_line(conn),))
     return {"brews": [dict(r) for r in rows]}
 
 
@@ -686,8 +706,35 @@ def ntfy_host_ok(url: str) -> None:
     raise ValueError("test target must be ntfy.sh or localhost")
 
 
+def ntfy_url_ok(url: str) -> str:
+    """A *stored* topic URL must be plain http(s) without credentials. A file:/ or other scheme
+    makes the server read a local path on every state change, and `user:pass@` would put a
+    password into the push. Private hosts stay allowed on purpose — a self-hosted ntfy on the
+    LAN is the normal case, and the owner configures this, unlike a client-chosen test target."""
+    p = urlparse((url or "").strip())
+    # Non-ASCII cannot go into a request line (urllib fails), and the masked value /api/state
+    # hands out must never be saved back as a "topic" — an old cached page would do that.
+    if not url.isascii() or any(c.isspace() for c in url):
+        raise ValueError("notify URL must be an http(s) topic URL")
+    if p.scheme not in ("http", "https") or not p.hostname or p.username or p.password:
+        raise ValueError("notify URL must be an http(s) topic URL")
+    return url.strip()
+
+
+def mask_ntfy(url: str) -> str:
+    """What /api/state hands out: the host is enough to recognise the topic, the topic itself
+    is a bearer secret — anyone who knows it can publish to the owner's phone (and read the
+    pushes). /api/export keeps the real URL, a backup has to restore."""
+    p = urlparse(url or "")
+    if not p.scheme or not p.netloc:
+        return ""
+    return f"{p.scheme}://{p.netloc}/•••" if p.path.strip("/") else f"{p.scheme}://{p.netloc}"
+
+
 def ntfy_send(url: str, message: str, title: str = "Nespresso") -> str | None:
     """POST to an ntfy topic (ntfy.sh or self-hosted). Returns an error string, or None."""
+    if urlparse(url).scheme not in ("http", "https"):
+        return "notify target must be http(s)"  # never let a stored URL read a local file
     try:
         with urllib.request.urlopen(
             urllib.request.Request(url, data=message.encode(), headers={"Title": title}),
@@ -701,22 +748,50 @@ def ntfy_send(url: str, message: str, title: str = "Nespresso") -> str | None:
 def notify_check(conn: sqlite3.Connection, send=None) -> None:
     """After any state change: push one reminder per capsule that just ran low and per
     overdue upkeep task — at most once per episode; restocking or logging the task arms
-    the next one. Messages are English (the server doesn't know the reader's UI language).
-    ponytail: episodes are tracked in two settings keys, not a new table."""
+    the next one. A queued brew is announced once per pending row. Messages are English
+    (the server doesn't know the reader's UI language).
+    ponytail: episodes are tracked in settings keys, not a new table."""
     url = get_setting(conn, "ntfy_url")
     if not url:
         return  # unconfigured: don't record episodes either, so configuring it later
     send = send or ntfy_send    # immediately reports what is low / due right now
-    low = {r["id"] for r in conn.execute("SELECT id FROM capsules WHERE count <= threshold")}
-    notified = {int(x) for x in get_setting(conn, "notified_low").split(",") if x.isdigit()}
+    # Only the machine's own line can run low for its owner; the other line is not in use.
+    line = machine_line(conn)
+    low = {r["id"] for r in conn.execute(
+        "SELECT id FROM capsules WHERE count <= threshold AND line = ?", (line,))}
+    # Episodes are per line: a line switch must not re-announce what was already pushed.
+    notified = {int(x) for x in get_setting(conn, f"notified_low_{line}").split(",") if x.isdigit()}
     for cid in sorted(low - notified):
         r = conn.execute("SELECT name, count FROM capsules WHERE id = ?", (cid,)).fetchone()
         if r:  # a failed send still marks the episode done — a retry storm is worse
             err = send(url, f"{r['name']}: only {r['count']} left", title="Nespresso - running low")
             if err:
                 print(f"notify failed: {err}", file=sys.stderr)
-    conn.execute("INSERT OR REPLACE INTO settings VALUES ('notified_low', ?)",
-                 (",".join(str(i) for i in sorted(low)),))
+    conn.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)",
+                 (f"notified_low_{line}", ",".join(str(i) for i in sorted(low)),))
+    # A brew the detector could not pin to a capsule waits in the dashboard for a pick. Only
+    # announce one the dashboard can actually offer a capsule for — an out-of-stock or unknown
+    # brew has nothing to choose, so "which capsule?" would be a dead end.
+    pending = conn.execute(
+        """SELECT b.id, b.family, b.source,
+                  (SELECT COUNT(*) FROM capsules c
+                    WHERE c.line = ? AND c.count > 0
+                      AND (b.family IS NULL OR lower(c.family) = lower(b.family))) AS picks
+           FROM brews b WHERE b.capsule_id IS NULL AND b.delta < 0 ORDER BY b.id""",
+        (line,)).fetchall()
+    announced = {int(x) for x in get_setting(conn, "notified_pending").split(",") if x.isdigit()}
+    still_pending = {p["id"] for p in pending}
+    for p in pending:
+        if p["id"] in announced or not p["picks"]:
+            continue  # already said, or no capsule to pick — a restock will make it one later
+        announced.add(p["id"])
+        what = f"{p['family']} brew" if p["family"] else "brew"
+        err = send(url, f"{what} from {p['source']} needs a capsule - open the dashboard to pick it",
+                   title="Nespresso - which capsule?")
+        if err:
+            print(f"notify failed: {err}", file=sys.stderr)
+    conn.execute("INSERT OR REPLACE INTO settings VALUES ('notified_pending', ?)",
+                 (",".join(str(i) for i in sorted(announced & still_pending)),))
     due = [m for m in maintenance_state(conn) if m["due"]]
     notified_m = {x for x in get_setting(conn, "notified_maint").split(",") if x}
     for m in due:
@@ -894,6 +969,7 @@ def known_catalogue() -> list[dict]:
 
 def current_state(conn) -> dict:
     machine = {r["key"]: r["value"] for r in conn.execute("SELECT * FROM settings")}
+    machine["ntfy_url"] = mask_ntfy(machine.get("ntfy_url", ""))  # topic stays server-side
     # One machine at a time: only the configured line's capsules are the dashboard's business.
     # Capsules of the other line stay in the db (switching back brings them right back).
     line = valid_line(machine.get("machine_line"))
@@ -935,6 +1011,16 @@ def current_state(conn) -> dict:
 
 # --------------------------------------------------------------------------- http
 
+def origin_allowed(origin: str | None, host: str | None, forwarded_host: str | None = "") -> bool:
+    """A browser always sends Origin on a mutating request, so a cross-site one is refused
+    here — otherwise any page the owner visits could POST /api/import and wipe the db.
+    Non-browser callers (the deck plugin, curl) send none and are not the threat model.
+    X-Forwarded-Host covers a proxy that rewrites Host."""
+    if not origin:
+        return True
+    return urlparse(origin).netloc.lower() in {h.lower() for h in (host, forwarded_host) if h}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "NespressoStats/1.0"
 
@@ -953,6 +1039,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # The dashboard must not be frameable: a hostile page could otherwise overlay it and
+        # borrow the owner's clicks — the Origin guard does not help there, a click inside the
+        # iframe is same-origin. No script-src/style-src: the frontend uses inline handlers, so
+        # a strict policy would need a rewrite; these four cost nothing and cover the rest.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy",
+                         "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; "
+                         "form-action 'self'")
         if cache:
             self.send_header("Cache-Control", cache)
         self.end_headers()
@@ -1011,7 +1107,21 @@ class Handler(BaseHTTPRequestHandler):
         # Photos and translation files change only with a deploy — let the browser hold them.
         self._send(200, target.read_bytes(), ctype, cache="public, max-age=3600")
 
+    def _same_origin(self) -> bool:
+        origin = self.headers.get("Origin")
+        forwarded = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+        if origin_allowed(origin, self.headers.get("Host"), forwarded):
+            return True
+        # Kept out of the access log (log_message is silenced), so name it here: a proxy
+        # that rewrites Host without X-Forwarded-Host would otherwise 403 silently.
+        print(f"cross-origin rejected: origin={origin!r} host={self.headers.get('Host')!r}",
+              file=sys.stderr)
+        self._send(403, {"error": "cross-origin request rejected"})
+        return False
+
     def do_POST(self):
+        if not self._same_origin():
+            return
         url = urlparse(self.path)
         try:
             payload = self._body()
@@ -1062,6 +1172,8 @@ class Handler(BaseHTTPRequestHandler):
                                 title="Nespresso - test")
                 self._send(200, {"ok": err is None, "error": err})
             elif url.path == "/api/settings":
+                if payload.get("ntfy_url"):  # empty clears the topic; anything else is checked
+                    payload["ntfy_url"] = ntfy_url_ok(str(payload["ntfy_url"]))
                 for key in ("machine_name", "machine_model", "machine_image", "sleeve_size",
                             "clean_days", "descale_days", "ntfy_url"):
                     if key in payload:
@@ -1122,15 +1234,20 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True, "capsule": row["name"]})
 
     def do_DELETE(self):
+        if not self._same_origin():
+            return
         url = urlparse(self.path)
         id_ = parse_qs(url.query).get("id", [None])[0]
-        if not id_:
+        if not id_ or not id_.isdigit():
             self._send(400, {"error": "id required"})
             return
         conn = self._conn()
         if url.path == "/api/capsules":
-            conn.execute("DELETE FROM capsules WHERE id=?", (id_,))
-            conn.commit()
+            try:
+                self._send(200, delete_capsule(conn, int(id_)))
+            except ValueError as err:
+                self._send(409, {"error": str(err)})
+                return
         elif url.path == "/api/brews":
             result = undo_brew(conn, int(id_))
             notify_async()
@@ -1290,6 +1407,49 @@ def selftest() -> None:
         assert conn.execute("SELECT capsule_id FROM brews WHERE id=?", (bid,)).fetchone()[0] == intenso
         assert len(brew_stats(conn)["brews"]) >= 1
 
+        # stats are line-scoped: the other line's history must not feed this machine's numbers
+        other_line = conn.execute(
+            "SELECT id FROM capsules WHERE line='original' LIMIT 1").fetchone()[0]
+        log_brew(conn, other_line, "Espresso", "manual")
+        seen = {b["capsule_id"] for b in brew_stats(conn)["brews"]}
+        assert intenso in seen and other_line not in seen, seen
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'original')")
+        assert other_line in {b["capsule_id"] for b in brew_stats(conn)["brews"]}
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'vertuo')")
+
+        # an unknown brew (no capsule) counts for the line in use; a brew orphaned by a
+        # pre-2026 capsule deletion has no line and must not be counted for either
+        probe = conn.execute(
+            "INSERT INTO brews (capsule_id, family, ts, source, delta)"
+            " VALUES (99999, 'Mug', ?, 'manual', -1)", (now_iso(),)).lastrowid
+        unknown = conn.execute(
+            "INSERT INTO brews (capsule_id, family, ts, source, delta)"
+            " VALUES (NULL, NULL, ?, 'auto', -1)", (now_iso(),)).lastrowid
+        seen = {b["capsule_id"] for b in brew_stats(conn)["brews"]}
+        assert None in seen and 99999 not in seen, seen
+        conn.execute("DELETE FROM brews WHERE id IN (?, ?)", (probe, unknown))
+
+        # deleting a capsule with brew history would orphan its rows, so it is refused;
+        # a capsule that was never used still deletes
+        try:
+            delete_capsule(conn, intenso)
+            raise AssertionError("expected ValueError for a capsule with brew history")
+        except ValueError:
+            pass
+        assert conn.execute("SELECT 1 FROM capsules WHERE id=?", (intenso,)).fetchone()
+        conn.execute("INSERT INTO capsules (name, sku, family, color, line)"
+                     " VALUES ('Never used', '', 'Mug', '#000000', 'vertuo')")
+        unused = conn.execute("SELECT id FROM capsules WHERE name='Never used'").fetchone()[0]
+        assert delete_capsule(conn, unused)["ok"]
+        assert not conn.execute("SELECT 1 FROM capsules WHERE id=?", (unused,)).fetchone()
+
+        # a mutating request from another site is refused; native clients send no Origin
+        assert origin_allowed(None, "ncs.khmls.net")
+        assert origin_allowed("https://ncs.khmls.net", "ncs.khmls.net")
+        assert origin_allowed("https://ncs.khmls.net", "127.0.0.1:8787", "ncs.khmls.net")
+        assert not origin_allowed("https://evil.example", "ncs.khmls.net")
+        assert not origin_allowed("null", "ncs.khmls.net")  # sandboxed / file:// page
+
         # resolving only works on genuinely pending brews — an already-assigned id is refused
         try:
             resolve_pending(conn, intenso, bid)
@@ -1447,6 +1607,73 @@ def selftest() -> None:
         conn.commit()
         notify_check(conn, send=record)
         assert any("Intenso" in m for m in sent[n:]), sent  # …and re-arms it
+        assert {r["key"] for r in conn.execute("SELECT key FROM settings")} >= {
+            "notified_low_vertuo"}, "low-stock episodes must be tracked per line"
+        # a line switch keeps the vertuo episode: coming back must not re-announce Intenso
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'original')")
+        notify_check(conn, send=record)
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'vertuo')")
+        n = len(sent)
+        notify_check(conn, send=record)
+        assert len(sent) == n, sent
+
+        # a brew the detector could not pin to a capsule is pushed once, so the count cannot
+        # silently drift; resolving or ignoring it clears the row and with it the episode
+        conn.execute("INSERT INTO brews (capsule_id, family, ts, source, delta)"
+                     " VALUES (NULL, 'Mug', ?, 'streamdeck', -1)", (now_iso(),))
+        notify_check(conn, send=record)
+        assert len(sent) == n + 1 and "needs a capsule" in sent[-1], sent[n:]
+        notify_check(conn, send=record)
+        assert len(sent) == n + 1, sent  # no repeat for the same pending brew
+        conn.execute("DELETE FROM brews WHERE capsule_id IS NULL AND delta < 0"
+                     " AND source = 'streamdeck'")
+        # nothing to choose from = no push: the queue can hold a family this line cannot brew
+        # (a pending left over from the other machine), and "which capsule?" would be a dead end
+        conn.execute("INSERT INTO brews (capsule_id, family, ts, source, delta)"
+                     " VALUES (NULL, 'Ristretto', ?, 'streamdeck', -1)", (now_iso(),))
+        n = len(sent)
+        notify_check(conn, send=record)
+        assert not any("needs a capsule" in m for m in sent[n:]), sent[n:]
+        assert "notified_pending" in {r["key"] for r in conn.execute("SELECT key FROM settings")}
+        conn.execute("DELETE FROM brews WHERE capsule_id IS NULL AND delta < 0"
+                     " AND source = 'streamdeck'")
+
+        # the ntfy topic is a bearer secret: /api/state hands out a mask, a backup keeps the
+        # real URL, and a stored URL must not be able to make the server read local files
+        conn.execute("INSERT OR REPLACE INTO settings VALUES"
+                     " ('ntfy_url', 'https://ntfy.sh/s3cret')")
+        conn.commit()
+        assert current_state(conn)["machine"]["ntfy_url"] == "https://ntfy.sh/•••"
+        exported = {r["key"]: r["value"] for r in export_data(conn)["settings"]}
+        assert exported["ntfy_url"] == "https://ntfy.sh/s3cret", exported
+        assert mask_ntfy("") == "" and mask_ntfy("https://ntfy.sh") == "https://ntfy.sh"
+        assert ntfy_url_ok("https://ntfy.sh/topic") == "https://ntfy.sh/topic"
+        assert ntfy_url_ok("http://192.168.70.5:8080/topic")  # self-hosted ntfy stays usable
+        for bad in ("file:///etc/passwd", "ftp://ntfy.sh/x", "https://user:pw@ntfy.sh/x", "",
+                    "https://ntfy.sh/•••",  # the mask /api/state hands out — never save it back
+                    "https://ntfy.sh/my topic"):
+            try:
+                ntfy_url_ok(bad)
+                raise AssertionError(f"expected ValueError for {bad!r}")
+            except ValueError:
+                pass
+        assert ntfy_send("file:///etc/passwd", "x"), "a file: topic must be refused, not read"
+        assert ntfy_send("http://127.0.0.1:9/topic", "x"), "a refused connection reports an error"
+
+        # every response carries the anti-framing headers: a click inside an iframe is
+        # same-origin, so the Origin guard does not stop a hostile page from overlaying the UI
+        h3 = Handler.__new__(Handler)
+        sent_headers = []
+        h3.send_response = lambda code, *a, **k: None
+        h3.send_header = lambda k, v: sent_headers.append((k, v))
+        h3.end_headers = lambda: None
+        h3.wfile = type("W", (), {"write": lambda self, body: None})()
+        h3._send(200, {"ok": True})
+        sent_headers = dict(sent_headers)
+        assert sent_headers["X-Frame-Options"] == "DENY", sent_headers
+        assert sent_headers["X-Content-Type-Options"] == "nosniff", sent_headers
+        assert sent_headers["Referrer-Policy"] == "no-referrer", sent_headers
+        assert "frame-ancestors 'none'" in sent_headers["Content-Security-Policy"], sent_headers
 
         # a pre-intensity db gains the column and backfills values from the catalogue
         old = connect(Path(tmp) / "old.db")

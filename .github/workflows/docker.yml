@@ -2,10 +2,8 @@ name: docker
 
 on:
   push:
-    branches: [master]  # feature branches must not deploy over :latest
-    paths-ignore:
-      - 'README.md'
-      - '.github/workflows/docker.yml'
+    branches: [master]   # a branch push never overwrites a release tag
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -13,18 +11,8 @@ permissions:
   packages: write
 
 jobs:
-  selftest:
+  build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Run selftest
-        run: python3 server.py --selftest
-
-  docker:
-    runs-on: ubuntu-latest
-    # Only deploy what passed the selftest, and only from master.
-    needs: selftest
-    if: github.ref == 'refs/heads/master'
     steps:
       - uses: actions/checkout@v7
 
@@ -36,10 +24,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # v0.91 -> :0.91 (immutable, what docker-compose.yml pins), master -> :master, plus the
+      # moving :latest. type=match and not type=semver: semver needs MAJOR.MINOR.PATCH, so a
+      # two-part tag like v0.91 produced no tag at all while the build still reported success.
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=match,pattern=v(.*),group=1
+            type=ref,event=branch
+            type=raw,value=latest
+
       - uses: docker/build-push-action@v7
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

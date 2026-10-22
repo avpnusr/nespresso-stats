@@ -25,22 +25,33 @@ each capsule you have, and capsules left at 0 are removed from your inventory
 - `PORT=9000 HOST=0.0.0.0 python3 server.py` to expose it on your LAN. The server
   has **no login** — it is built for a trusted home network. Expose it to the
   internet only behind an authenticating reverse proxy.
+- The ntfy topic in `/api/state` is **masked** (`https://ntfy.sh/•••`) because anyone
+  who knows a topic can publish to your phone; a `/api/export` backup still carries
+  the real URL (it has to restore). A stored topic URL must be `http(s)` — a
+  `file:` URL would make the server read local paths.
 - `NESPRESSO_DB=/path/to.db` to move the database.
 
 ### Docker
 
 ```bash
-docker compose up -d   # pulls ghcr.io/avpnusr/nespresso-stats:latest → http://<host>:8787
+docker compose up -d   # pulls the pinned release → http://<host>:8787
 ```
 
-CI publishes a `:latest` image on every push, so `docker compose pull` picks up
-new versions (the tag is the only one, so a pull can also change what you run).
+Releases are git tags: a `v0.91` tag builds the immutable image tag `:0.91`, and
+`docker-compose.yml` pins that — so `docker compose pull` only changes what you
+run when **you** bump the pin. A moving `:latest` still exists for convenience;
+never deploy from it, since anything pushed to `main` lands there.
+
+```bash
+git tag v0.92 && git push origin v0.92   # publish a release
+# then bump the image tag in docker-compose.yml and: docker compose pull && docker compose up -d
+```
 
 Or without compose:
 
 ```bash
 docker run -d --name nespresso-stats -p 8787:8787 \
-  -v "$PWD/data:/data" ghcr.io/avpnusr/nespresso-stats:latest
+  -v "$PWD/data:/data" ghcr.io/avpnusr/nespresso-stats:0.91
 ```
 
 The vision backend is configurable from the shell or a `.env` file beside the
@@ -340,14 +351,14 @@ and reads its `language` field — drop the file in and it appears.
 
 | Method | Path | Body |
 | --- | --- | --- |
-| GET | `/api/state` | — (`capsules`, `brews`, `pending`, `maintenance`, `machine`, `families`, and `known` — catalogue capsules not in your inventory, used to prefill the add dialog) |
-| GET | `/api/stats` | — (raw brew/restock events for the stats view) |
+| GET | `/api/state` | — (`capsules`, `brews`, `pending`, `maintenance`, `machine`, `families`, and `known` — catalogue capsules not in your inventory, used to prefill the add dialog; `machine.ntfy_url` is masked) |
+| GET | `/api/stats` | — (raw brew/restock events for the stats view, scoped to the machine's line) |
 | GET | `/api/languages` | — (available UI translations, `[{code, label}]`) |
 | GET | `/api/export` | — (full JSON backup of capsules, brews, settings) |
 | POST | `/api/import` | a `/api/export` backup — replaces all data |
 | POST | `/api/notify-test` | `{url?}` — test push; a client-chosen `url` must be `ntfy.sh` (https) or localhost, anything else tests the saved topic |
 | POST | `/api/capsules` | `{id?, name, family, color, image, notes, count, price, threshold, intensity, special}` (`special` = limited-edition ★) |
-| DELETE | `/api/capsules?id=N` | — |
+| DELETE | `/api/capsules?id=N` | — (409 if the capsule has brew history: set its count to 0 instead) |
 | POST | `/api/brew` | `{capsule_id, delta, log?, source?}` (delta `-1` = remove, `+1` = restock; `log:true` also records a brew, `source` defaults to `manual`) |
 | POST | `/api/brew-detected` | `{family?, capsule?, source?}` — `capsule` names the exact pod and wins; `family` alone falls back to the rule below |
 | POST | `/api/brews` | `{brew_id, capsule_id}` — reassign/resolve a brew |
@@ -355,9 +366,14 @@ and reads its `language` field — drop the file in and it appears.
 | POST | `/api/identify` | `{color, image?}` — `color` is `#rrggbb`, `image` an optional data URL |
 | POST | `/api/resolve` | `{capsule_id, brew_id?}` |
 | POST | `/api/dismiss` | `{brew_id}` |
-| POST | `/api/settings` | `{machine_name?, machine_model?, machine_image?, sleeve_size?, clean_days?, descale_days?, ntfy_url?}` |
+| POST | `/api/settings` | `{machine_name?, machine_model?, machine_image?, sleeve_size?, clean_days?, descale_days?, ntfy_url?}` (`ntfy_url` must be an `http(s)` topic URL; empty clears it) |
 | POST | `/api/order` | `{ids}` — capsule ids in the user's drag order |
 | POST | `/api/maintenance` | `{task}` — `clean` or `descale` |
+
+Every `POST`/`DELETE` is refused with 403 when the browser reports a foreign
+`Origin` (a web page you merely visit must not be able to `POST /api/import` and
+wipe the db). Clients that send no `Origin` — the Stream Deck plugin, `curl` — are
+unaffected.
 
 ## Files
 

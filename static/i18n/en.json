@@ -78,6 +78,9 @@
     "card.brew": "Brew",
     "card.edit": "Edit",
     "card.delete": "Delete",
+    "card.deleteBlocked": "This capsule has brew history, so it can't be deleted. Set its count to 0 instead.",
+    "card.usage": "{n}× brewed",
+    "card.lastBrewed": "last {days}d ago",
     "card.empty": "No capsules yet — add one to get started.",
     "card.intensityTitle": "Intensity {n} of 13",
     "filter.placeholder": "Filter capsules…",
@@ -143,9 +146,10 @@
     "backup.restored": "Backup restored.",
     "backup.invalid": "That doesn't look like a backup file.",
 
-    "setup.title": "Set up your shelf",
+    "setup.title": "Stock-take",
     "setup.intro": "Enter how many of each capsule you have. Capsules left at 0 are removed from your inventory — you can add them back later from the capsule picker. Leave everything at 0 to start empty.",
     "setup.save": "Save stock",
-    "setup.saved": "Stock saved."
+    "setup.saved": "Stock saved.",
+    "btn.stocktake": "📋 Count every capsule"
   }
 }

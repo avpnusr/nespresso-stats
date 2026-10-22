@@ -1,6 +1,9 @@
 services:
   nespresso-stats:
-    image: ghcr.io/avpnusr/nespresso-stats:latest
+    # Pinned to a release tag on purpose: a moving :latest would let any push to
+    # main reach a running install on the next `docker compose pull`. Bump it
+    # deliberately after reading a release. `:latest` still exists for the impatient.
+    image: ghcr.io/avpnusr/nespresso-stats:0.91
     ports:
       - "8787:8787"
     environment:

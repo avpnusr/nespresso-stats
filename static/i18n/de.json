@@ -78,6 +78,9 @@
     "card.brew": "Brühen",
     "card.edit": "Bearbeiten",
     "card.delete": "Löschen",
+    "card.deleteBlocked": "Diese Kapsel hat Brüh-Historie und kann nicht gelöscht werden. Setze die Anzahl stattdessen auf 0.",
+    "card.usage": "{n}× gebrüht",
+    "card.lastBrewed": "zuletzt vor {days} T.",
     "card.empty": "Noch keine Kapseln – füge eine hinzu.",
     "card.intensityTitle": "Intensität {n} von 13",
     "filter.placeholder": "Kapseln filtern…",
@@ -143,9 +146,10 @@
     "backup.restored": "Backup wiederhergestellt.",
     "backup.invalid": "Das sieht nicht nach einer Backup-Datei aus.",
 
-    "setup.title": "Regal einrichten",
+    "setup.title": "Bestandsaufnahme",
     "setup.intro": "Trag ein, wie viele Kapseln du von jeder Sorte hast. Sorten mit 0 werden aus deinem Bestand entfernt – du kannst sie später über die Kapselauswahl wieder hinzufügen. Alles auf 0 lassen, um leer zu starten.",
     "setup.save": "Bestand speichern",
-    "setup.saved": "Bestand gespeichert."
+    "setup.saved": "Bestand gespeichert.",
+    "btn.stocktake": "📋 Alles zählen"
   }
 }
