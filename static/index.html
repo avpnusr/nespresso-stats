@@ -281,14 +281,16 @@ const capsuleArt = (c) => {
   return capsuleSVG(safeColor(c.color));
 };
 const intensityBar = (c) => c.intensity
-  ? `<span class="intensity" title="${esc(t("card.intensityTitle", { n: c.intensity }))}"><span class="scale">${Array.from({ length: 13 }, (_, i) => `<i class="${i < c.intensity ? "on" : ""}"></i>`).join("")}</span><b>${c.intensity}</b></span>`
+  ? `<span class="intensity" title="${esc(t("card.intensityTitle", { n: c.intensity }))}"><span class="scale">${Array.from({ length: 13 }, (_, i) => `<i class="${i < c.intensity ? "on" : ""}"></i>`).join("")}</span><b>${esc(c.intensity)}</b></span>`
   : "";
-const costLabel = (c) => c.price > 0
-  ? `<span class="cost">€${c.price.toFixed(2)}/cap</span>`
-    + (c.store_price != null
-      ? ` <span class="cost deal" title="${esc(t("card.priceChange", { p: c.store_price.toFixed(2), old: c.price.toFixed(2) }))}">${c.store_price < c.price ? "↓" : "↑"} €${c.store_price.toFixed(2)}</span>`
-      : "")
-  : "";
+const costLabel = (c) => {
+  const paid = Number(c.price), store = Number(c.store_price);
+  if (!(paid > 0)) return "";
+  const badge = Number.isFinite(store)
+    ? ` <span class="cost deal" title="${esc(t("card.priceChange", { p: store.toFixed(2), old: paid.toFixed(2) }))}">${store < paid ? "↓" : "↑"} €${store.toFixed(2)}</span>`
+    : "";
+  return `<span class="cost">€${paid.toFixed(2)}/cap</span>` + badge;
+};
 function capsuleSVG(color) {
   return `<svg viewBox="0 0 60 96" width="60" height="96" aria-hidden="true">
     <path d="M10 22 h40 l-5 62 a6 6 0 0 1 -6 6 h-18 a6 6 0 0 1 -6 -6 z" fill="${color}"/>
@@ -304,7 +306,7 @@ const machineSVG = () => `<svg viewBox="0 0 120 160" width="104" height="140" ar
   <path d="M44 110 h32 v14 a8 8 0 0 1 -8 8 h-16 a8 8 0 0 1 -8 -8 z" fill="#efe6d5"/>
   <rect x="28" y="140" width="64" height="6" rx="3" fill="#111"/>
 </svg>`;
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 
 // ---------------------------------------------------------------- theme
 // Choice lives in localStorage ("auto" | "dark" | "light"); auto follows the OS via
@@ -458,7 +460,7 @@ function render() {
       <div class="meta">${intensityBar(c)}${costLabel(c)}</div>
       <div class="count ${isLow(c) ? "low" : ""}">
         <button onclick="change(${c.id},1)" title="${esc(t("card.addOne"))}">+</button>
-        <b>${c.count}</b>
+        <b>${esc(c.count)}</b>
         <button onclick="change(${c.id},-1)" title="${esc(t("card.removeOne"))}">−</button>
       </div>
       <div class="tools">
@@ -502,7 +504,7 @@ function renderStats() {
     ? `<span class="fam">${esc(t("low.title"))}</span>` + low.map((c) => {
         const dl = daysLeft(c);
         const delta = Math.max(0, sleeveSize() - c.count);
-        return `<button onclick="restock(${c.id})" ${delta ? "" : "disabled"}>${esc(c.name)} · ${c.count}${dl != null ? ` · ${esc(t("low.daysLeft", { days: dl }))}` : ""}${delta ? ` → ${sleeveSize()}` : ""}</button>`;
+        return `<button onclick="restock(${c.id})" ${delta ? "" : "disabled"}>${esc(c.name)} · ${esc(c.count)}${dl != null ? ` · ${esc(t("low.daysLeft", { days: dl }))}` : ""}${delta ? ` → ${sleeveSize()}` : ""}</button>`;
       }).join("")
       + `<button class="ghost" onclick="copyOrder()">${esc(t("low.order"))}</button>`
     : "";
@@ -573,7 +575,7 @@ function renderActivity() {
     const restock = b.delta > 0;
     const label = maint ? esc(maintLabel(b.source)) : b.capsule_name ? esc(b.capsule_name) : esc(t("activity.unknown"));
     return `<div class="brew">
-      <span>${maint ? maint.icon : restock ? "📦" : b.capsule_name ? "☕" : "❓"} ${label} ${restock ? `<b class="ok">+${b.delta}</b>` : ""}</span>
+      <span>${maint ? maint.icon : restock ? "📦" : b.capsule_name ? "☕" : "❓"} ${label} ${restock ? `<b class="ok">+${esc(b.delta)}</b>` : ""}</span>
       <span class="fam">${maint ? esc(t("activity.maintenance")) : esc(b.family || "") + " · " + esc(sourceLabel(b.source))}</span>
       <time>${new Date(b.ts).toLocaleString()}</time>
       ${b.delta < 0 ? `<button class="ghost" onclick="openBrewEditor(${b.id})">${esc(t("activity.change"))}</button>` : ""}
@@ -627,6 +629,9 @@ $("restore-input").addEventListener("change", async (e) => {
 
 async function load() {
   const [s, st] = await Promise.all([api("/api/state"), api("/api/stats")]);
+  // With AUTH_TOKEN set the page stays open but its own calls are 401 — keep the empty
+  // dashboard the README promises instead of throwing in render().
+  if (!s || !s.capsules) return;
   state = s; stats = st.brews || [];
   render();
 }
@@ -866,7 +871,7 @@ $("machine-form").addEventListener("submit", async (e) => {
 function openSetup() {
   $("setup-list").innerHTML = state.capsules.map((c) => `
     <label><span>${esc(c.name)} <span class="fam">${esc(c.family)}</span></span>
-      <input type="number" min="0" value="${c.count}" data-id="${c.id}" aria-label="${esc(c.name)}"></label>`).join("");
+      <input type="number" min="0" value="${esc(c.count)}" data-id="${c.id}" aria-label="${esc(c.name)}"></label>`).join("");
   $("setup-dialog").showModal();
 }
 
@@ -906,6 +911,7 @@ async function testNotify() {
 (async function init() {
   applyTheme();
   languages = await api("/api/languages");
+  if (!Array.isArray(languages)) languages = [];  // 401 with AUTH_TOKEN: stay on English
   const saved = localStorage.getItem("lang");
   const browser = (navigator.language || "en").slice(0, 2).toLowerCase();
   lang = [saved, browser, "en"].find((c) => languages.some((l) => l.code === c)) || "en";
@@ -913,7 +919,7 @@ async function testNotify() {
   buildLangSelect();
   applyStatic();
   await load();
-  if (!state.machine.setup_done) openSetup();
+  if (state.capsules.length && !state.machine.setup_done) openSetup();  // empty = 401, not a fresh shelf
 })();
 
 function dragOrder() {

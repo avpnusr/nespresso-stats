@@ -62,6 +62,21 @@ Ollama on the host set `VISION_BASE_URL` to the host's IP (`host.docker.internal
 on Docker Desktop). Set `VISION_MODEL=` (empty) to turn vision off and identify by
 colour alone.
 
+Two of the same-shape settings are about access:
+
+- **`PUBLIC_HOST`** — the hostname the dashboard is browsed *by name* (behind Caddy
+  that's `ncs.khmls.net`). Requests to `/api/*` through any other name are refused:
+  the write-guard trusts a request's origin only as far as the request's own `Host`
+  header, and a DNS-rebinding page controls both (attacker's domain, attacker's DNS
+  pointing at your machine). Browsing by IP address (`<lan-ip>:8787`), `localhost`
+  and the healthcheck keep working without it. Set it in the `.env` next to the
+  compose file.
+- **`AUTH_TOKEN`** — empty by default (the LAN-trust model, nothing changes). When
+  set, every `/api/*` route requires `Authorization: Bearer <token>` (401 otherwise)
+  — meant for automation that can send headers, and for deployments that leave the
+  LAN. The page itself stays open: it just shows an empty dashboard until an API
+  client is authorised.
+
 The database lives in `./data` (bind-mounted), so it survives rebuilds.
 Delete `data/nespresso.db` to re-seed from `capsules.json` on next start.
 
@@ -125,7 +140,7 @@ The dashboard runs **one machine at a time**. Pick its capsule system under
 | | Vertuo | Original Line |
 | --- | --- | --- |
 | Cup sizes | Espresso, Double Espresso, Gran Lungo, Mug, Alto, Carafe, Alto XL | Ristretto, Espresso, Lungo |
-| Capsules shown | the 47 Vertuo entries in `capsules.json` | the 29 Original entries |
+| Capsules shown | the 50 Vertuo entries in `capsules.json` | the 29 Original entries |
 | Identify from photo | only Vertuo matches | only Original matches |
 | Auto-decrement | cup size from the barcode, so the pod is narrowed down | never a cup size — a detected brew is queued as *which capsule was it?* |
 

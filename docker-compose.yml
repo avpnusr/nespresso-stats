@@ -10,6 +10,15 @@ services:
       # Unraid-style uid/gid for the app user (default 99:100).
       PUID: ${PUID:-99}
       PGID: ${PGID:-100}
+      # Where the dashboard is browsed *by name* behind the reverse proxy (e.g.
+      # ncs.khmls.net). /api/* through any other name is refused — set this in your .env,
+      # or the dashboard answers 403 through the proxy. Direct IP/localhost access and
+      # the healthcheck work without it.
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
+      # Optional: when set (Bearer token), every /api/* route needs an Authorization
+      # header; empty keeps the LAN-trust model. Automation (Stream Deck, curl) sends:
+      # Authorization: Bearer <token>
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
       # Vision backend for photo identify (README → "Enabling a vision backend").
       # Override in the shell or a .env file next to this file. `-` (not `:-`) on
       # the first two on purpose: an empty value turns vision off.

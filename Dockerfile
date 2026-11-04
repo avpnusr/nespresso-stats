@@ -16,8 +16,9 @@ RUN mkdir -p /data && chown 99:100 /data
 VOLUME /data
 EXPOSE 8787
 
+# The page itself is served before the /api gatekeeper, so this stays 200 with AUTH_TOKEN set.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=5s \
-    CMD wget -qO /dev/null http://127.0.0.1:8787/api/state
+    CMD wget -qO /dev/null http://127.0.0.1:8787/
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python3", "server.py"]

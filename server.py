@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import difflib
 import ast
+import hmac
+import ipaddress
 import json
 import mimetypes
 import os
@@ -54,6 +56,13 @@ CATALOGUE_RENAMES = {
 }
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8787"))
+# The dashboard's *name* when it is browsed as one (behind a proxy it keeps Host, or the
+# proxy rewrites it and sends X-Forwarded-Host). A name not in this allowlist is refused
+# on /api/* — see host_allowed for why that closes DNS rebinding.
+PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "").strip().lower()
+# When set, every /api route wants `Authorization: Bearer <token>` (401 otherwise);
+# when empty, the usual LAN-trust model applies and nothing changes.
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
 
 # Capsule systems ("lines"). The machine is configured as exactly one of them, which decides
 # the cup sizes it brews, the capsules the dashboard shows, and what the hardware can report:
@@ -162,7 +171,8 @@ def init_db(conn: sqlite3.Connection, seed_path: Path = CATALOG) -> None:
             family     TEXT,
             ts         TEXT NOT NULL,
             source     TEXT NOT NULL,
-            delta      INTEGER NOT NULL DEFAULT -1
+            delta      INTEGER NOT NULL DEFAULT -1,
+            line       TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
@@ -228,6 +238,13 @@ def migrate(conn: sqlite3.Connection) -> None:
     brew_cols = {r[1] for r in conn.execute("PRAGMA table_info(brews)")}
     if "delta" not in brew_cols:
         conn.execute("ALTER TABLE brews ADD COLUMN delta INTEGER NOT NULL DEFAULT -1")
+    if "line" not in brew_cols:
+        # A pending brew has no capsule to ask for its line, so it is stamped when logged;
+        # without it the row would show up on the other line after a machine switch.
+        conn.execute("ALTER TABLE brews ADD COLUMN line TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            "UPDATE brews SET line = COALESCE((SELECT line FROM capsules WHERE id = brews.capsule_id), '')"
+            " WHERE capsule_id IS NOT NULL")
     conn.commit()
 
 
@@ -279,10 +296,14 @@ def dec(conn, capsule_id: int, delta: int = -1) -> None:
     )
 
 
-def log_brew(conn, capsule_id, family, source, ts=None, delta=-1) -> int:
+def log_brew(conn, capsule_id, family, source, ts=None, delta=-1, line=None) -> int:
+    if line is None:  # the capsule's line wins; a capsule-less brew belongs to the line in use
+        row = conn.execute("SELECT line FROM capsules WHERE id = ?", (capsule_id,)).fetchone() \
+            if capsule_id else None
+        line = row["line"] if row else machine_line(conn)
     cur = conn.execute(
-        "INSERT INTO brews (capsule_id, family, ts, source, delta) VALUES (?, ?, ?, ?, ?)",
-        (capsule_id, family, ts or now_iso(), source, delta),
+        "INSERT INTO brews (capsule_id, family, ts, source, delta, line) VALUES (?, ?, ?, ?, ?, ?)",
+        (capsule_id, family, ts or now_iso(), source, delta, line),
     )
     return cur.lastrowid
 
@@ -332,32 +353,37 @@ def _queue_unknown(conn, line: str, source: str) -> dict:
     ).fetchall()
     if not rows:
         return {"action": "unknown", "family": None}
-    log_brew(conn, None, None, source)
+    log_brew(conn, None, None, source, line=line)
     conn.commit()
     return {"action": "pending", "family": None, "candidates": [r["name"] for r in rows]}
 
 
 def resolve_pending(conn, capsule_id: int, brew_id: int | None = None) -> dict:
-    row = conn.execute("SELECT id, family FROM capsules WHERE id = ?", (capsule_id,)).fetchone()
-    if row is None:
+    capsule = conn.execute("SELECT id, family, line FROM capsules WHERE id = ?",
+                           (capsule_id,)).fetchone()
+    if capsule is None:
         raise ValueError("capsule not found")
     if brew_id is None:
         pend = conn.execute(
-            "SELECT id FROM brews WHERE capsule_id IS NULL AND delta < 0 ORDER BY id LIMIT 1"
+            "SELECT id FROM brews WHERE capsule_id IS NULL AND delta < 0"
+            " AND (line = ? OR line = '') ORDER BY id LIMIT 1", (capsule["line"],)
         ).fetchone()
         brew_id = pend["id"] if pend else None
     else:
         # a client-supplied id must point at a genuinely pending brew — resolving an
         # already-assigned one would double-decrement the capsule
-        row = conn.execute("SELECT capsule_id, delta FROM brews WHERE id = ?", (brew_id,)).fetchone()
-        if row is None or row["capsule_id"] is not None or row["delta"] >= 0:
+        pend = conn.execute("SELECT capsule_id, delta, line FROM brews WHERE id = ?",
+                            (brew_id,)).fetchone()
+        if pend is None or pend["capsule_id"] is not None or pend["delta"] >= 0:
             raise ValueError("not a pending brew")
+        if pend["line"] and pend["line"] != capsule["line"]:
+            raise ValueError("pending brew belongs to the other capsule system")
     if brew_id is None:
         raise ValueError("no pending brew")
     dec(conn, capsule_id)
     conn.execute("UPDATE brews SET capsule_id = ? WHERE id = ?", (capsule_id, brew_id))
     conn.commit()
-    return {"action": "resolved", "capsule": row["family"]}
+    return {"action": "resolved", "capsule": capsule["family"]}
 
 
 def dismiss_pending(conn, brew_id: int) -> dict:
@@ -380,12 +406,17 @@ def undo_brew(conn, brew_id: int) -> dict:
 
 def set_brew_capsule(conn, brew_id: int, capsule_id: int) -> dict:
     """Reassign (or resolve) a brew to a different capsule, fixing the counts."""
-    row = conn.execute("SELECT capsule_id, delta FROM brews WHERE id = ?", (brew_id,)).fetchone()
-    target = conn.execute("SELECT family FROM capsules WHERE id = ?", (capsule_id,)).fetchone()
+    row = conn.execute("SELECT capsule_id, delta, line FROM brews WHERE id = ?",
+                       (brew_id,)).fetchone()
+    target = conn.execute("SELECT family, line FROM capsules WHERE id = ?",
+                          (capsule_id,)).fetchone()
     if row is None:
         raise ValueError("brew not found")
     if target is None:
         raise ValueError("capsule not found")
+    # same boundary as resolve_pending: one brew cannot move to the other capsule system
+    if row["line"] and row["line"] != target["line"]:
+        raise ValueError("brew belongs to the other capsule system")
     if row["delta"] >= 0:
         raise ValueError("only brews can be reassigned")
     if row["capsule_id"] is not None and row["capsule_id"] != capsule_id:
@@ -416,13 +447,15 @@ def delete_capsule(conn, capsule_id: int) -> dict:
 def brew_stats(conn) -> dict:
     """Raw consumption events for the client to aggregate (timezone-local), scoped to the
     machine's line — the other line's history must not feed this machine's days-left or
-    average. A brew that never named a capsule (unknown brew) counts for the line in use;
-    one orphaned by a pre-2026 deletion has no line at all and stays out."""
+    average. A brew that never named a capsule (unknown brew) counts for the line it was
+    logged on (rows from before that column still count for the line in use); one orphaned
+    by a pre-2026 deletion has no line at all and stays out."""
+    line = machine_line(conn)
     rows = conn.execute(
         """SELECT b.ts, b.capsule_id, b.delta FROM brews b
            LEFT JOIN capsules c ON c.id = b.capsule_id
-           WHERE b.capsule_id IS NULL OR c.line = ?
-           ORDER BY b.id DESC LIMIT 5000""", (machine_line(conn),))
+           WHERE c.line = ? OR (b.capsule_id IS NULL AND (b.line = ? OR b.line = ''))
+           ORDER BY b.id DESC LIMIT 5000""", (line, line))
     return {"brews": [dict(r) for r in rows]}
 
 
@@ -588,7 +621,10 @@ def identify(conn, color: str, image_data_url: str | None = None, line: str | No
               "vision_enabled": bool(VISION_BASE_URL and VISION_MODEL),
               "line": line}
     if image_data_url:
-        result["vision"] = vision_pick(image_data_url, candidates, line)
+        # only data: images are forwarded — a client-supplied http(s) URL would make the
+        # vision backend fetch whatever it points at (an SSRF primitive from its host)
+        result["vision"] = vision_pick(image_data_url, candidates, line) \
+            if image_data_url.startswith("data:image/") else None
     vis = result["vision"]
     if vis and not vis.get("error"):
         text = (vis.get("text") or "").strip()
@@ -678,7 +714,10 @@ def maintenance_state(conn) -> list[dict]:
             "SELECT ts FROM brews WHERE source = ? ORDER BY id DESC LIMIT 1", (task,)
         ).fetchone()
         last = row["ts"] if row else None
-        nxt = datetime.fromisoformat(last) + timedelta(days=days) if last else None
+        try:
+            nxt = datetime.fromisoformat(last) + timedelta(days=days) if last else None
+        except (TypeError, ValueError):  # a hand-edited backup must not brick /api/state
+            last = nxt = None
         out.append({
             "task": task, "label": label, "every_days": days, "last": last,
             "next": nxt.isoformat(timespec="seconds") if nxt else None,
@@ -777,10 +816,14 @@ def notify_check(conn: sqlite3.Connection, send=None) -> None:
                   (SELECT COUNT(*) FROM capsules c
                     WHERE c.line = ? AND c.count > 0
                       AND (b.family IS NULL OR lower(c.family) = lower(b.family))) AS picks
-           FROM brews b WHERE b.capsule_id IS NULL AND b.delta < 0 ORDER BY b.id""",
-        (line,)).fetchall()
+           FROM brews b WHERE b.capsule_id IS NULL AND b.delta < 0
+             AND (b.line = ? OR b.line = '') ORDER BY b.id""",
+        (line, line)).fetchall()
     announced = {int(x) for x in get_setting(conn, "notified_pending").split(",") if x.isdigit()}
-    still_pending = {p["id"] for p in pending}
+    # Pruned against every pending row, not just this line's: a line switch must not
+    # forget an announcement and repeat it when the owner switches back.
+    still_pending = {r["id"] for r in conn.execute(
+        "SELECT id FROM brews WHERE capsule_id IS NULL AND delta < 0")}
     for p in pending:
         if p["id"] in announced or not p["picks"]:
             continue  # already said, or no capsule to pick — a restock will make it one later
@@ -885,6 +928,10 @@ def import_data(conn: sqlite3.Connection, data: dict) -> dict:
             conn.execute(f"DELETE FROM {table}")
             for row in data[table]:
                 cols = {k: v for k, v in row.items() if k in valid}
+                # same validation a fresh /api/settings write would apply — a restored file
+                # must not smuggle in a file:/ or credential-bearing notify URL
+                if table == "settings" and row.get("key") == "ntfy_url" and row.get("value"):
+                    ntfy_url_ok(str(row["value"]))
                 if not cols:
                     raise ValueError(f"empty row in '{table}'")
                 conn.execute(
@@ -1016,11 +1063,13 @@ def new_for_line(conn, line: str, entries: list[dict] | None = None) -> list[dic
     sku when both sides have one, the name otherwise (same rule as picked `known`)."""
     remote = remote_entries() if entries is None else entries
     owned_skus = {r["sku"] for r in conn.execute("SELECT sku FROM capsules") if r["sku"]}
-    owned_names = {r["name"].strip().lower() for r in conn.execute("SELECT name FROM capsules")}
+    # keyed by line: owning Vertuo Colombia must not hide Original Colombia
+    owned_names = {(r["line"], r["name"].strip().lower())
+                   for r in conn.execute("SELECT name, line FROM capsules")}
     _, new = merge_catalogue(local_catalogue(), remote)
     return [c for c in new if entry_line(c) == line
             and not ((c.get("sku") or "").strip() in owned_skus
-                     or (c.get("name") or "").strip().lower() in owned_names)]
+                     or (line, (c.get("name") or "").strip().lower()) in owned_names)]
 
 
 def current_state(conn) -> dict:
@@ -1033,13 +1082,14 @@ def current_state(conn) -> dict:
     # Known-but-not-inventoried capsules of this line, for the "add capsule" picker.
     # Ownership is the sku when both sides have one (the store renames capsules), the name
     # otherwise (a hand-added capsule has no sku). `known` is the catalogue you don't own yet.
-    owned_names = {r["name"].strip().lower() for r in conn.execute("SELECT name FROM capsules")}
+    owned_names = {(r["line"], r["name"].strip().lower())
+                   for r in conn.execute("SELECT name, line FROM capsules")}
     owned_skus = {r["sku"] for r in conn.execute("SELECT sku FROM capsules") if r["sku"]}
 
     def owned(c: dict) -> bool:
         sku = (c.get("sku") or "").strip()
         return (bool(sku) and sku in owned_skus) \
-            or c.get("name", "").strip().lower() in owned_names
+            or (entry_line(c), c.get("name", "").strip().lower()) in owned_names
 
     merged, _ = merge_catalogue(local_catalogue(), remote_entries())
     known = [c for c in merged if entry_line(c) == line and not owned(c)]
@@ -1066,7 +1116,7 @@ def current_state(conn) -> dict:
         if paid > 0 and store and abs(store - paid) > 0.005:
             c["store_price"] = store
     # Manual drag order wins; anything unlisted (new capsule) keeps family/name order at the end.
-    order = [int(x) for x in machine.get("capsule_order", "").split(",") if x]
+    order = [int(x) for x in str(machine.get("capsule_order") or "").split(",") if x.isdigit()]
     pos = {cid: i for i, cid in enumerate(order)}
     capsules.sort(key=lambda c: (pos.get(c["id"], len(order)), c["family"], c["name"]))
     brews = [dict(r) for r in conn.execute(
@@ -1074,8 +1124,10 @@ def current_state(conn) -> dict:
            FROM brews b LEFT JOIN capsules c ON c.id = b.capsule_id
            ORDER BY b.id DESC LIMIT 12"""
     )]
+    # only this line's pendings (a row from before the line column stays visible on both)
     pending = [dict(r) for r in conn.execute(
-        "SELECT id, family, ts, source FROM brews WHERE capsule_id IS NULL AND delta < 0 ORDER BY id"
+        "SELECT id, family, ts, source FROM brews WHERE capsule_id IS NULL AND delta < 0"
+        " AND (line = ? OR line = '') ORDER BY id", (line,)
     )]
     return {
         "capsules": capsules, "brews": brews, "pending": pending,
@@ -1097,8 +1149,36 @@ def origin_allowed(origin: str | None, host: str | None, forwarded_host: str | N
     return urlparse(origin).netloc.lower() in {h.lower() for h in (host, forwarded_host) if h}
 
 
+def host_allowed(host: str | None, forwarded: str | None = "") -> bool:
+    """Which Host a request may claim, checked on every /api route. The Origin guard
+    compares against the request's *own* Host header — exactly what a DNS-rebinding page
+    can make match: an attacker's domain, resolved by the attacker's own DNS to this
+    machine. The browser keeps the attacker name, so *names* are not trusted here.
+    Accepted are hosts browsed by IP address (direct LAN use, the container healthcheck),
+    localhost, and the configured PUBLIC_HOST (a *named* deployment behind a proxy — set
+    it for the public hostname, a .local/mDNS name, or any other alias).
+    X-Forwarded-Host is honoured like origin_allowed does for a Host-rewriting proxy."""
+    real = ((forwarded or "").split(",")[0].strip() or (host or "").strip())
+    hostname = real.lower()
+    if hostname.startswith("["):  # [::1]:8787
+        hostname = hostname[1:].split("]")[0]
+    else:
+        hostname = hostname.split(":", 1)[0]
+    hostname = hostname.rstrip(".")
+    if not hostname:
+        return False
+    if hostname == "localhost" or (PUBLIC_HOST and hostname == PUBLIC_HOST):
+        return True
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return False  # some *name*: only PUBLIC_HOST is known-safe, the rest could rebind
+    return True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "NespressoStats/1.0"
+    timeout = 30  # a client that stalls mid-request drops its own thread, not the server
 
     def log_message(self, *args):  # keep the console clean
         pass
@@ -1127,6 +1207,10 @@ class Handler(BaseHTTPRequestHandler):
                          "form-action 'self'")
         if cache:
             self.send_header("Cache-Control", cache)
+        else:
+            # api JSON and the page itself are live data — a full backup or the ntfy host must
+            # never land in a browser's disk cache; /static carries its own max-age instead
+            self.send_header("Cache-Control", "no-store")
         self.end_headers()
         if body:
             self.wfile.write(body)
@@ -1135,6 +1219,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
+            self._send(400, {"error": "invalid Content-Length"})
+            raise ConnectionError("invalid Content-Length")
+        if length < 0:
             self._send(400, {"error": "invalid Content-Length"})
             raise ConnectionError("invalid Content-Length")
         if length > 10 * 1024 * 1024:  # photos come in at ~1024px; anything bigger is abuse
@@ -1146,8 +1233,32 @@ class Handler(BaseHTTPRequestHandler):
     def _conn(self) -> sqlite3.Connection:
         return connect()
 
+    def _host_ok(self) -> bool:
+        if host_allowed(self.headers.get("Host"), self.headers.get("X-Forwarded-Host")):
+            return True
+        print(f"rejected host: {self.headers.get('Host')!r}", file=sys.stderr)
+        self._send(403, {"error": "request host not allowed"})
+        return False
+
+    def _authorized(self) -> bool:
+        """AUTH_TOKEN unset → every /api route is open (the LAN-trust model). When set, a
+        request needs `Authorization: Bearer <token>`; the constant-time compare keeps a
+        wrong token from being probed byte by byte."""
+        if not AUTH_TOKEN:
+            return True
+        got = self.headers.get("Authorization", "")
+        return hmac.compare_digest(got.encode("utf-8"), f"Bearer {AUTH_TOKEN}".encode("utf-8"))
+
+    def _api_gatekeeper(self) -> bool:
+        if not self._authorized():
+            self._send(401, {"error": "authorization required (Bearer token)"})
+            return False
+        return self._host_ok()
+
     def do_GET(self):
         url = urlparse(self.path)
+        if url.path.startswith("/api") and not self._api_gatekeeper():
+            return
         if url.path in ("/", "/index.html"):
             self._send(200, INDEX.read_bytes(), "text/html; charset=utf-8")
             return
@@ -1196,9 +1307,11 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def do_POST(self):
+        url = urlparse(self.path)
+        if url.path.startswith("/api") and not self._api_gatekeeper():
+            return
         if not self._same_origin():
             return
-        url = urlparse(self.path)
         try:
             payload = self._body()
         except json.JSONDecodeError:
@@ -1310,9 +1423,11 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True, "capsule": row["name"]})
 
     def do_DELETE(self):
+        url = urlparse(self.path)
+        if url.path.startswith("/api") and not self._api_gatekeeper():
+            return
         if not self._same_origin():
             return
-        url = urlparse(self.path)
         id_ = parse_qs(url.query).get("id", [None])[0]
         if not id_ or not id_.isdigit():
             self._send(400, {"error": "id required"})
@@ -1320,20 +1435,23 @@ class Handler(BaseHTTPRequestHandler):
         conn = self._conn()
         if url.path == "/api/capsules":
             try:
-                self._send(200, delete_capsule(conn, int(id_)))
+                result = delete_capsule(conn, int(id_))
             except ValueError as err:
                 self._send(409, {"error": str(err)})
                 return
-        elif url.path == "/api/brews":
-            result = undo_brew(conn, int(id_))
-            notify_async()
+            notify_async()  # deleting can end a low-stock episode
             self._send(200, result)
             return
-        else:
-            self._send(404, {"error": "not found"})
+        if url.path == "/api/brews":
+            try:
+                result = undo_brew(conn, int(id_))
+            except ValueError as err:
+                self._send(404, {"error": str(err)})
+                return
+            notify_async()  # undo can end or start a low-stock episode
+            self._send(200, result)
             return
-        notify_async()  # undo/delete can end or start a low-stock episode
-        self._send(200, {"ok": True})
+        self._send(404, {"error": "not found"})
 
 
 def selftest() -> None:
@@ -1414,6 +1532,17 @@ def selftest() -> None:
         if conn.execute("SELECT 1 FROM capsules WHERE name='Melozio Go'").fetchone():
             assert capsule_names_in(conn, "MELOZIO GO RECYCLE ME")[0]["name"] == "Melozio Go"
 
+        # the vision backend never fetches a client-suggested URL: only data: images pass,
+        # nothing else reaches the network (port 9 refuses = still a network-free selftest)
+        g = globals()
+        old_v, g["VISION_BASE_URL"] = VISION_BASE_URL, "http://127.0.0.1:9/v1"
+        old_m, g["VISION_MODEL"] = VISION_MODEL, "test-model"
+        r = identify(conn, "#000000", "http://169.254.169.254/latest/meta-data")
+        assert r["vision"] is None, r["vision"]  # dropped before any fetch
+        r = identify(conn, "#000000", "data:image/png;base64,aGk=")
+        assert r["vision"] and r["vision"].get("error"), r["vision"]  # the backend was reached
+        g["VISION_BASE_URL"], g["VISION_MODEL"] = old_v, old_m
+
         # single capsule of a family → auto decrement (Fortado is the only Gran Lungo)
         conn.execute("UPDATE capsules SET count = 3 WHERE name = 'Fortado'")
         conn.execute("UPDATE capsules SET count = 0 WHERE family != 'Gran Lungo'")
@@ -1437,6 +1566,15 @@ def selftest() -> None:
         resolve_pending(conn, melozio)
         assert conn.execute("SELECT count FROM capsules WHERE name='Melozio'").fetchone()[0] == 1
 
+        # the dashboard always names the pending brew (resolve(id, brew_id)); that path must
+        # resolve instead of raising on the brew row it just looked up
+        conn.execute("UPDATE capsules SET count = 2 WHERE name IN ('Melozio','Intenso')")
+        brew_detected(conn, "Mug")
+        pend = conn.execute("SELECT id FROM brews WHERE capsule_id IS NULL AND delta < 0"
+                            " ORDER BY id DESC LIMIT 1").fetchone()[0]
+        resolved = resolve_pending(conn, melozio, pend)
+        assert resolved["action"] == "resolved" and resolved["capsule"], resolved
+
         # count never goes below zero, and a multi-capsule family stays pending
         conn.execute("UPDATE capsules SET count = 0")
         conn.execute("UPDATE capsules SET count = 1 WHERE name IN ('Melozio','Intenso')")
@@ -1448,6 +1586,23 @@ def selftest() -> None:
         # out of stock family is not treated as a candidate
         conn.execute("UPDATE capsules SET count = 0")
         assert brew_detected(conn, "Gran Lungo")["action"] == "out-of-stock"
+
+        # a pending queued on the other line must not leak onto this one, and must not be
+        # resolvable against this line's capsule
+        conn.execute("UPDATE capsules SET count = 1 WHERE line = 'original'")
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'original')")
+        assert brew_detected(conn, None)["action"] == "pending"  # OL reports no cup size
+        foreign = conn.execute("SELECT id FROM brews WHERE capsule_id IS NULL"
+                               " AND line = 'original' ORDER BY id DESC LIMIT 1").fetchone()
+        assert foreign, "a familyless pending must record its line"
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'vertuo')")
+        assert foreign["id"] not in [p["id"] for p in current_state(conn)["pending"]]
+        try:
+            resolve_pending(conn, melozio, foreign["id"])
+            raise AssertionError("expected ValueError for the other line's pending")
+        except ValueError:
+            pass
+        conn.execute("DELETE FROM brews WHERE id = ?", (foreign["id"],))
 
         # colour ranking: an exact colour match ranks first
         conn.execute("UPDATE capsules SET color='#26415e' WHERE name='Melozio'")
@@ -1482,6 +1637,15 @@ def selftest() -> None:
         assert conn.execute("SELECT count FROM capsules WHERE id=?", (intenso,)).fetchone()[0] == 4
         assert conn.execute("SELECT capsule_id FROM brews WHERE id=?", (bid,)).fetchone()[0] == intenso
         assert len(brew_stats(conn)["brews"]) >= 1
+
+        # a brew cannot be reassigned to the other capsule system either
+        foreign_capsule = conn.execute(
+            "SELECT id FROM capsules WHERE line='original' LIMIT 1").fetchone()[0]
+        try:
+            set_brew_capsule(conn, bid, foreign_capsule)
+            raise AssertionError("expected ValueError for the other line's capsule")
+        except ValueError:
+            pass
 
         # stats are line-scoped: the other line's history must not feed this machine's numbers
         other_line = conn.execute(
@@ -1526,6 +1690,43 @@ def selftest() -> None:
         assert not origin_allowed("https://evil.example", "ncs.khmls.net")
         assert not origin_allowed("null", "ncs.khmls.net")  # sandboxed / file:// page
 
+        # Host allowlist (DNS rebinding): the Origin guard would trust a rebinding page's
+        # name (it matches the request's own Host), so names are refused unless allowed.
+        # IPs, localhost and PUBLIC_HOST pass — direct LAN use and the healthcheck keep working.
+        assert host_allowed("127.0.0.1:8787") and host_allowed("192.168.70.200:8787")
+        assert host_allowed("[::1]:8787") and host_allowed("localhost:8892")
+        assert not host_allowed("attacker.com:8787")  # a rebindable name
+        assert not host_allowed("ncs.khmls.net")  # named deployments need PUBLIC_HOST
+        g["PUBLIC_HOST"] = "ncs.khmls.net"
+        assert host_allowed("ncs.khmls.net", forwarded="ncs.khmls.net")
+        assert host_allowed("ncs.khmls.net") and not host_allowed("evil.example:80")
+        g["PUBLIC_HOST"] = ""
+        assert not host_allowed("") and not host_allowed(None)
+        # the handler refuses the rebinding request even though Origin matches its own Host
+        h4 = Handler.__new__(Handler)
+        h4.headers = {"Host": "attacker.com:8787", "Origin": "http://attacker.com:8787"}
+        gate_codes = []
+        h4._send = lambda code, *a, **k: gate_codes.append(code)
+        assert h4._api_gatekeeper() is False and gate_codes == [403], gate_codes
+
+        # AUTH_TOKEN: unset = open (the default), set = Bearer header required on /api/*
+        h5 = Handler.__new__(Handler)
+        h5._send = h4._send
+        h5.headers = {}
+        assert h5._authorized()  # no token configured
+        g["AUTH_TOKEN"] = "s3cret"
+        assert h5._authorized() is False  # no Authorization header
+        h5.headers = {"Authorization": "Bearer s3cret"}
+        assert h5._authorized()
+        h5.headers = {"Authorization": "Bearer s3crets"}  # one byte off
+        assert h5._authorized() is False
+        h5.headers = {"Authorization": "s3cretion"}
+        assert h5._authorized() is False  # wrong scheme
+        gate_codes.clear()
+        h5.headers = {"Host": "127.0.0.1:8787"}
+        assert h5._api_gatekeeper() is False and gate_codes == [401], gate_codes
+        g["AUTH_TOKEN"] = ""
+
         # resolving only works on genuinely pending brews — an already-assigned id is refused
         try:
             resolve_pending(conn, intenso, bid)
@@ -1566,6 +1767,14 @@ def selftest() -> None:
         ids = [r[0] for r in conn.execute("SELECT id FROM capsules WHERE line='vertuo'")]
         set_capsule_order(conn, list(reversed(ids)))
         assert [c["id"] for c in current_state(conn)["capsules"]] == list(reversed(ids))
+
+        # a garbled setting or timestamp (a hand-edited backup) must not brick /api/state
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('capsule_order', '1,abc')")
+        assert current_state(conn)["capsules"]
+        conn.execute("UPDATE brews SET ts = 'not-a-date' WHERE source = 'clean'")
+        assert current_state(conn)["maintenance"]
+        conn.execute("UPDATE brews SET ts = ? WHERE source = 'clean'",
+                     ("2000-01-01T00:00:00+00:00",))
 
         # migration is idempotent on an already-migrated db
         migrate(conn)
@@ -1636,6 +1845,19 @@ def selftest() -> None:
             pass
         assert conn.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] == len(backup["capsules"]), \
             "failed import must not wipe the db"
+        # a restored backup cannot smuggle in what /api/settings would have refused anyway
+        try:
+            import_data(conn, {**backup, "settings": [
+                *backup["settings"], {"key": "ntfy_url", "value": "file:///etc/passwd"}]})
+            raise AssertionError("expected ValueError for a file: notify URL")
+        except ValueError:
+            pass
+        assert conn.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] == len(backup["capsules"]), \
+            "failed import must not wipe the db"
+        assert import_data(conn, {**backup, "settings": [
+            *backup["settings"], {"key": "ntfy_url", "value": "https://ntfy.sh/ok"}]})["ok"]
+        conn.execute("DELETE FROM settings WHERE key = 'ntfy_url'")  # the notify block expects no topic
+        conn.commit()
 
         # garbage Content-Length is a 400, not a server-side crash
         h2 = Handler.__new__(Handler)
@@ -1750,6 +1972,12 @@ def selftest() -> None:
         assert sent_headers["X-Content-Type-Options"] == "nosniff", sent_headers
         assert sent_headers["Referrer-Policy"] == "no-referrer", sent_headers
         assert "frame-ancestors 'none'" in sent_headers["Content-Security-Policy"], sent_headers
+        assert sent_headers["Cache-Control"] == "no-store", sent_headers  # api JSON: live data
+        sent_headers.clear()
+        headers2 = []
+        h3.send_header = lambda k, v: headers2.append((k, v))
+        h3._send(200, b"png", "image/png", cache="public, max-age=3600")
+        assert dict(headers2)["Cache-Control"] == "public, max-age=3600"  # /static keeps its own
 
         # a pre-intensity db gains the column and backfills values from the catalogue
         old = connect(Path(tmp) / "old.db")
@@ -1897,6 +2125,15 @@ def selftest() -> None:
 
         _scanner_entries.clear()
         assert current_state(conn)["new_capsules"] == []
+
+        # a name is not an identity across lines: owning Vertuo Colombia must not hide the
+        # Original Line Colombia from the picker (it is a separate product with its own sku)
+        conn.execute("UPDATE capsules SET count = 1 WHERE name = 'Colombia' AND line = 'vertuo'")
+        conn.execute("DELETE FROM capsules WHERE name = 'Colombia' AND line = 'original'")
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'original')")
+        assert "Colombia" in [k["name"] for k in current_state(conn)["known"]], \
+            "a same-name capsule of the other line is not owned"
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'vertuo')")
     print("selftest ok")
 
 
