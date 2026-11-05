@@ -170,7 +170,7 @@
   <section><h2 data-i18n="section.activity">Recent activity</h2><div class="brews" id="brews"></div></section>
 </main>
 
-<dialog id="editor">
+<dialog id="editor" aria-labelledby="editor-title">
   <form method="dialog" id="editor-form">
     <h3 id="editor-title" data-i18n="dialog.add">Add capsule</h3>
     <div id="known-row" hidden>
@@ -179,31 +179,31 @@
     </div>
     <input type="hidden" id="f-id">
     <input type="hidden" id="f-sku">
-    <label data-i18n="field.name">Capsule name</label><input id="f-name" required>
-    <label data-i18n="field.family">Family</label><select id="f-family"></select>
-    <label data-i18n="field.photo">Photo URL (optional)</label><input id="f-image" placeholder="https://…">
-    <label data-i18n="field.color">Capsule colour</label><input id="f-color" type="color" value="#6b4f3a">
-    <label data-i18n="field.intensity">Intensity (0 = not set, 1–13)</label><input id="f-intensity" type="number" min="0" max="13" value="0">
-    <label data-i18n="field.count">Count</label><input id="f-count" type="number" min="0" value="10">
-    <label data-i18n="field.price">Price per capsule (€, optional)</label><input id="f-price" type="number" min="0" step="0.01" value="0">
-    <label data-i18n="field.threshold">Low-stock threshold</label><input id="f-threshold" type="number" min="0" value="2">
+    <label for="f-name" data-i18n="field.name">Capsule name</label><input id="f-name" required>
+    <label for="f-family" data-i18n="field.family">Family</label><select id="f-family"></select>
+    <label for="f-image" data-i18n="field.photo">Photo URL (optional)</label><input id="f-image" placeholder="https://…">
+    <label for="f-color" data-i18n="field.color">Capsule colour</label><input id="f-color" type="color" value="#6b4f3a">
+    <label for="f-intensity" data-i18n="field.intensity">Intensity (0 = not set, 1–13)</label><input id="f-intensity" type="number" min="0" max="13" value="0">
+    <label for="f-count" data-i18n="field.count">Count</label><input id="f-count" type="number" min="0" value="10">
+    <label for="f-price" data-i18n="field.price">Price per capsule (€, optional)</label><input id="f-price" type="number" min="0" step="0.01" value="0">
+    <label for="f-threshold" data-i18n="field.threshold">Low-stock threshold</label><input id="f-threshold" type="number" min="0" value="2">
     <label class="check"><input type="checkbox" id="f-special"> <span data-i18n="field.special">Limited edition (seasonal)</span></label>
-    <label data-i18n="field.notes">Notes</label><textarea id="f-notes" rows="2"></textarea>
+    <label for="f-notes" data-i18n="field.notes">Notes</label><textarea id="f-notes" rows="2"></textarea>
     <menu><button value="cancel" class="ghost" formnovalidate data-i18n="action.cancel">Cancel</button><button id="f-save" class="primary" value="save" data-i18n="action.save">Save</button></menu>
   </form>
 </dialog>
 
-<dialog id="machine-dialog">
+<dialog id="machine-dialog" aria-labelledby="machine-title">
   <form method="dialog" id="machine-form">
-    <h3 data-i18n="dialog.machine">Machine</h3>
-    <label data-i18n="field.machineName">Name</label><input id="m-name">
-    <label data-i18n="field.model">Model</label><input id="m-model">
-    <label data-i18n="field.line">Capsule system</label><select id="m-line" onchange="lineChanged(this)"></select>
-    <label data-i18n="field.photo">Photo URL (optional)</label><input id="m-image" placeholder="https://…">
-    <label data-i18n="field.sleeve">Sleeve size (one-tap restock amount)</label><input id="m-sleeve" type="number" min="1" value="10">
-    <label data-i18n="field.cleanEvery">Clean every (days)</label><input id="m-clean" type="number" min="1" value="10">
-    <label data-i18n="field.descaleEvery">Descale every (days)</label><input id="m-descale" type="number" min="1" value="90">
-    <label data-i18n="field.ntfy">Push notifications — ntfy topic URL (optional)</label>
+    <h3 id="machine-title" data-i18n="dialog.machine">Machine</h3>
+    <label for="m-name" data-i18n="field.machineName">Name</label><input id="m-name">
+    <label for="m-model" data-i18n="field.model">Model</label><input id="m-model">
+    <label for="m-line" data-i18n="field.line">Capsule system</label><select id="m-line" onchange="lineChanged(this)"></select>
+    <label for="m-image" data-i18n="field.photo">Photo URL (optional)</label><input id="m-image" placeholder="https://…">
+    <label for="m-sleeve" data-i18n="field.sleeve">Sleeve size (one-tap restock amount)</label><input id="m-sleeve" type="number" min="1" value="10">
+    <label for="m-clean" data-i18n="field.cleanEvery">Clean every (days)</label><input id="m-clean" type="number" min="1" value="10">
+    <label for="m-descale" data-i18n="field.descaleEvery">Descale every (days)</label><input id="m-descale" type="number" min="1" value="90">
+    <label for="m-ntfy" data-i18n="field.ntfy">Push notifications — ntfy topic URL (optional)</label>
     <div style="display:flex; gap:8px">
       <input id="m-ntfy" placeholder="https://ntfy.sh/my-topic" style="flex:1">
       <button type="button" class="ghost" style="white-space:nowrap" onclick="testNotify()" data-i18n="btn.testNotify">Send test</button>
@@ -220,20 +220,20 @@
   </form>
 </dialog>
 
-<dialog id="setup-dialog">
+<dialog id="setup-dialog" aria-labelledby="setup-title">
   <form method="dialog" id="setup-form">
-    <h3 data-i18n="setup.title">Set up your shelf</h3>
+    <h3 id="setup-title" data-i18n="setup.title">Set up your shelf</h3>
     <p class="empty" data-i18n="setup.intro"></p>
     <div id="setup-list" class="setup-list"></div>
     <menu><button value="cancel" class="ghost" formnovalidate data-i18n="action.cancel">Cancel</button><button class="primary" value="save" data-i18n="setup.save">Save stock</button></menu>
   </form>
 </dialog>
 
-<dialog id="brew-dialog">
+<dialog id="brew-dialog" aria-labelledby="brew-title">
   <form method="dialog" id="brew-form">
-    <h3 data-i18n="dialog.changeCapsule">Change capsule</h3>
+    <h3 id="brew-title" data-i18n="dialog.changeCapsule">Change capsule</h3>
     <input type="hidden" id="b-id">
-    <label data-i18n="field.whichCapsule">Which capsule was it?</label><select id="b-capsule"></select>
+    <label for="b-capsule" data-i18n="field.whichCapsule">Which capsule was it?</label><select id="b-capsule"></select>
     <menu><button value="cancel" class="ghost" formnovalidate data-i18n="action.cancel">Cancel</button><button class="primary" value="save" data-i18n="action.save">Save</button></menu>
   </form>
 </dialog>
@@ -242,6 +242,8 @@
 const $ = (id) => document.getElementById(id);
 let state = { capsules: [], brews: [], pending: [], maintenance: [], machine: {}, families: [], lines: [] };
 let stats = [];
+let unauthorized = false;  // AUTH_TOKEN deployment: the page stays open but its calls are 401
+let loadGen = 0;           // only the newest load() may apply its (possibly older) response
 
 const MAINT = { clean: { icon: "🧽" }, descale: { icon: "🧴" } };
 
@@ -250,6 +252,8 @@ const thresholdOf = (c) => (c.threshold ?? 2);
 const isLow = (c) => c.count <= thresholdOf(c);
 const dayKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
 const daysAgo = (ts) => Math.floor((Date.now() - new Date(ts)) / 86400000);
+// Same identity the backend uses for the new-capsule banner: sku when there is one, else name.
+const newCapsuleKeys = (c) => [c.sku, c.name && "name:" + c.name.toLowerCase()].filter(Boolean);
 
 // Days until the next clean/descale, as shown on the toolbar buttons: not-yet-done is
 // "never", past-due shows how late, otherwise the days remaining (teal within 2 days).
@@ -270,7 +274,15 @@ async function api(path, method = "GET", body) {
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  return res.json();
+  let data = {};
+  try { data = await res.json(); } catch { data = {}; }  // an empty/HTML error body is still an answer
+  if (!res.ok) {
+    const err = data.error || `HTTP ${res.status}`;
+    if (res.status === 401) unauthorized = true;  // AUTH_TOKEN set: stop polling, keep it quiet
+    else if (method !== "GET") hint(err);  // a refused write used to vanish silently
+    return { ...data, error: err, status: res.status };
+  }
+  return data;
 }
 
 // A capsule colour reaches a JS string and an SVG attribute, so only a real hex value
@@ -363,6 +375,7 @@ function buildLangSelect() {
 
 async function setLang(code) {
   lang = code;
+  document.documentElement.lang = code;  // screen readers and hyphenation follow the UI
   localStorage.setItem("lang", code);
   await loadStrings();
   applyStatic();
@@ -370,6 +383,9 @@ async function setLang(code) {
 }
 
 function render() {
+  // Cards are rebuilt below; remember which one holds focus while the old DOM still exists.
+  const act = document.activeElement;
+  const focusId = act && act.closest ? (act.closest("#grid .card") || {}).id : null;
   const m = state.machine;
   $("machine-name").textContent = m.machine_name || "My Vertuo";
   $("machine-model").textContent = (m.machine_model || "Vertuo") + " · " + t("header.subtitle");
@@ -406,13 +422,15 @@ function render() {
       </div></div>`;
   }).join("");
 
-  // New-capsule hint (from the nespresso-scanner catalogue): dismissed names stay dismissed
-  // in this browser.
+  // New-capsule hint (from the nespresso-scanner catalogue): dismissed capsules stay
+  // dismissed in this browser. Keyed sku-first and by name as well, so a sku-less entry is
+  // not hidden and does not come back once the store starts publishing its sku.
   const seen = new Set(JSON.parse(localStorage.getItem("newSkus") || "[]"));
-  const fresh = (state.new_capsules || []).filter((c) => c.sku && !seen.has(c.sku));
+  const fresh = (state.new_capsules || []).filter((c) => !newCapsuleKeys(c).some((k) => seen.has(k)));
   $("new-capsules").innerHTML = fresh.length ? `<div class="pending new"><h3>✨ ${esc(t("new.title", { n: fresh.length }))}</h3>
     <div class="row">${fresh.map((c) => {
-      const i = (state.known || []).findIndex((k) => k.sku === c.sku);
+      const i = (state.known || []).findIndex((k) => c.sku
+        ? k.sku === c.sku : (k.name || "").toLowerCase() === (c.name || "").toLowerCase());
       return i >= 0 ? `<button onclick="addKnown(${i})">${esc(c.name)}</button>` : "";
     }).join("")}
       <button class="ghost" onclick="dismissNew()">${esc(t("action.ignore"))}</button></div>
@@ -450,7 +468,7 @@ function render() {
   const shown = q ? state.capsules.filter((c) =>
     [c.name, c.family, c.notes].some((f) => (f || "").toLowerCase().includes(q))) : state.capsules;
   $("grid").innerHTML = shown.map((c) => `
-    <div class="card" id="cap-${c.id}" draggable="${q ? "false" : "true"}">
+    <div class="card" id="cap-${c.id}" tabindex="0" aria-label="${esc(c.name)}, ${esc(c.count)}" draggable="${q ? "false" : "true"}">
       <div class="capsule-art">${capsuleArt(c)}</div>
       <div>
         <div class="name">${esc(c.name)}${c.special ? ` <span title="${esc(t("card.special"))}" style="color: var(--accent)">★</span>` : ""}</div>
@@ -472,6 +490,10 @@ function render() {
 
   renderStats();
   renderActivity();
+  // The cards below were replaced: the old DOM is gone, so remember the card (captured before
+  // the rebuild) and put keyboard focus back without scrolling.
+  const again = focusId && $(focusId);
+  if (again) again.focus({ preventScroll: true });
 }
 
 function renderStats() {
@@ -571,14 +593,16 @@ function heatmap(brews) {
 
 function renderActivity() {
   $("brews").innerHTML = state.brews.map((b) => {
+    // pending rows (capsule_id null) are resolved from the pending card — "Change" here
+    // would preselect the first tile and save it as the answer
     const maint = MAINT[b.source];
     const restock = b.delta > 0;
     const label = maint ? esc(maintLabel(b.source)) : b.capsule_name ? esc(b.capsule_name) : esc(t("activity.unknown"));
     return `<div class="brew">
       <span>${maint ? maint.icon : restock ? "📦" : b.capsule_name ? "☕" : "❓"} ${label} ${restock ? `<b class="ok">+${esc(b.delta)}</b>` : ""}</span>
       <span class="fam">${maint ? esc(t("activity.maintenance")) : esc(b.family || "") + " · " + esc(sourceLabel(b.source))}</span>
-      <time>${new Date(b.ts).toLocaleString()}</time>
-      ${b.delta < 0 ? `<button class="ghost" onclick="openBrewEditor(${b.id})">${esc(t("activity.change"))}</button>` : ""}
+      <time>${new Date(b.ts).toLocaleString(lang)}</time>
+      ${b.delta < 0 && b.capsule_id != null ? `<button class="ghost" onclick="openBrewEditor(${b.id})">${esc(t("activity.change"))}</button>` : ""}
       <button class="ghost" onclick="undoBrew(${b.id})" title="${esc(t("activity.undo"))}">↺</button>
     </div>`;
   }).join("") || `<p class="empty">${esc(t("activity.empty"))}</p>`;
@@ -591,7 +615,7 @@ function hint(msg) {
 
 function dismissNew() {
   const set = new Set(JSON.parse(localStorage.getItem("newSkus") || "[]"));
-  (state.new_capsules || []).forEach((c) => c.sku && set.add(c.sku));
+  (state.new_capsules || []).forEach((c) => newCapsuleKeys(c).forEach((k) => set.add(k)));
   localStorage.setItem("newSkus", JSON.stringify([...set]));
   render();
 }
@@ -622,18 +646,29 @@ $("restore-input").addEventListener("change", async (e) => {
   }
   if (!confirm(t("confirm.restore"))) return;
   const res = await api("/api/import", "POST", data);
-  if (res.error) { alert(t("backup.invalid")); return; }
+  if (res.error) { alert(`${t("backup.invalid")} ${res.error}`); return; }
+  $("machine-dialog").close();  // its fields still hold the pre-restore machine values
   hint(t("backup.restored"));
   await load();
 });
 
-async function load() {
+async function load(quiet = false) {
+  const gen = ++loadGen;
   const [s, st] = await Promise.all([api("/api/state"), api("/api/stats")]);
+  if (gen !== loadGen) return;  // a newer load already applied a fresher answer
+  if (quiet && document.querySelector("dialog[open]")) return;  // a form opened meanwhile
   // With AUTH_TOKEN set the page stays open but its own calls are 401 — keep the empty
   // dashboard the README promises instead of throwing in render().
   if (!s || !s.capsules) return;
   state = s; stats = st.brews || [];
   render();
+}
+
+async function refresh() {
+  // Background tick: a brew posted by the deck never reached an open dashboard. render()
+  // would reset the editor's selects under the owner's fingers, so an open dialog wins.
+  if (unauthorized || document.hidden || document.querySelector("dialog[open]")) return;
+  await load(true);
 }
 
 async function change(id, delta) { await api("/api/brew", "POST", { capsule_id: id, delta, log: false }); await load(); }
@@ -667,10 +702,11 @@ function openBrewEditor(brewId) {
 $("brew-form").addEventListener("submit", async (e) => {
   if (e.submitter?.value !== "save") return;
   e.preventDefault();
-  await api("/api/brews", "POST", {
+  const res = await api("/api/brews", "POST", {
     brew_id: parseInt($("b-id").value, 10),
     capsule_id: parseInt($("b-capsule").value, 10),
   });
+  if (res.error) return;  // leave the dialog open: the pick was refused
   $("brew-dialog").close();
   await load();
 });
@@ -714,7 +750,7 @@ $("f-known").addEventListener("change", (e) => {
 $("editor-form").addEventListener("submit", async (e) => {
   if (e.submitter?.value !== "save") return;
   e.preventDefault();
-  await api("/api/capsules", "POST", {
+  const res = await api("/api/capsules", "POST", {
     id: $("f-id").value || undefined,
     sku: $("f-sku").value,
     name: $("f-name").value, family: $("f-family").value,
@@ -726,6 +762,7 @@ $("editor-form").addEventListener("submit", async (e) => {
     special: $("f-special").checked ? 1 : 0,
     notes: $("f-notes").value,
   });
+  if (res.error) return;  // keep what was typed: the server refused it
   $("editor").close();
   await load();
 });
@@ -785,6 +822,7 @@ $("photo-input").addEventListener("change", async (e) => {
 function clearIdentify() { $("identify").innerHTML = ""; }
 
 function focusCapsule(id) {
+  if (!$("cap-" + id)) { $("filter").value = ""; render(); }  // a filter was hiding the tile
   const el = $("cap-" + id);
   if (!el) return;
   el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -861,7 +899,8 @@ $("machine-form").addEventListener("submit", async (e) => {
   };
   const topic = ntfyFieldValue();
   if (topic !== null) payload.ntfy_url = topic;  // untouched mask must not overwrite the topic
-  await api("/api/settings", "POST", payload);
+  const res = await api("/api/settings", "POST", payload);
+  if (res.error) return;  // e.g. a rejected ntfy URL: keep the dialog open with the text
   $("machine-dialog").close();
   await load();
 });
@@ -888,7 +927,8 @@ $("setup-form").addEventListener("submit", async (e) => {
   $("setup-list").querySelectorAll("input").forEach((el) => {
     counts[el.dataset.id] = parseInt(el.value, 10) || 0;
   });
-  await api("/api/setup", "POST", { counts });
+  const res = await api("/api/setup", "POST", { counts });
+  if (res.error) return;  // an empty shelf is a 400: do not claim it was saved
   $("setup-dialog").close();
   await load();
   hint(t("setup.saved"));
@@ -915,11 +955,15 @@ async function testNotify() {
   const saved = localStorage.getItem("lang");
   const browser = (navigator.language || "en").slice(0, 2).toLowerCase();
   lang = [saved, browser, "en"].find((c) => languages.some((l) => l.code === c)) || "en";
+  document.documentElement.lang = lang;  // the page starts as en; follow the restored choice
   await loadStrings();
   buildLangSelect();
   applyStatic();
   await load();
   if (state.capsules.length && !state.machine.setup_done) openSetup();  // empty = 401, not a fresh shelf
+  // A brew posted by the deck or /api/brew-detected never reached an already-open dashboard.
+  // Refresh in the background, but never over an open dialog or a 401 (AUTH_TOKEN) page.
+  setInterval(refresh, 30000);
 })();
 
 function dragOrder() {
@@ -939,6 +983,21 @@ function dragOrder() {
     e.preventDefault();
     const r = over.getBoundingClientRect();
     over.parentNode.insertBefore(dragged, e.clientY - r.top > r.height / 2 ? over.nextSibling : over);
+  });
+  grid.addEventListener("keydown", async (e) => {
+    // Keyboard reorder (Alt+Arrow), the drag equivalent: the cards are focusable for this.
+    // Disabled while filtering (the drag is too): the swap would move a hidden neighbour.
+    const card = e.target.closest(".card");
+    const dir = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0;
+    if (!card || !e.altKey || !dir || $("filter").value.trim()) return;
+    e.preventDefault();
+    const ids = state.capsules.map((c) => c.id);
+    const i = ids.indexOf(Number(card.id.slice(4)));
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    await api("/api/order", "POST", { ids });
+    await load();
   });
   grid.addEventListener("dragend", async () => {
     if (!dragId) return;

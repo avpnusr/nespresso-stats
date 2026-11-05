@@ -3,7 +3,7 @@ services:
     # Pinned to a release tag on purpose: a moving :latest would let any push to
     # main reach a running install on the next `docker compose pull`. Bump it
     # deliberately after reading a release. `:latest` still exists for the impatient.
-    image: ghcr.io/avpnusr/nespresso-stats:0.91
+    image: ghcr.io/avpnusr/nespresso-stats:0.95
     ports:
       - "8787:8787"
     environment:
@@ -15,6 +15,9 @@ services:
       # or the dashboard answers 403 through the proxy. Direct IP/localhost access and
       # the healthcheck work without it.
       PUBLIC_HOST: ${PUBLIC_HOST:-}
+      # Only for a proxy in front that *overwrites* X-Forwarded-Host; a proxy that keeps
+      # Host (Caddy's default) needs neither. See README → TRUST_PROXY.
+      TRUST_PROXY: ${TRUST_PROXY:-}
       # Optional: when set (Bearer token), every /api/* route needs an Authorization
       # header; empty keeps the LAN-trust model. Automation (Stream Deck, curl) sends:
       # Authorization: Bearer <token>

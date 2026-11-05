@@ -37,13 +37,13 @@ each capsule you have, and capsules left at 0 are removed from your inventory
 docker compose up -d   # pulls the pinned release → http://<host>:8787
 ```
 
-Releases are git tags: a `v0.91` tag builds the immutable image tag `:0.91`, and
+Releases are git tags: a `v0.95` tag builds the immutable image tag `:0.95`, and
 `docker-compose.yml` pins that — so `docker compose pull` only changes what you
 run when **you** bump the pin. A moving `:latest` still exists for convenience;
 never deploy from it, since anything pushed to `main` lands there.
 
 ```bash
-git tag v0.92 && git push origin v0.92   # publish a release
+git tag v0.96 && git push origin v0.96   # publish a release
 # then bump the image tag in docker-compose.yml and: docker compose pull && docker compose up -d
 ```
 
@@ -51,7 +51,7 @@ Or without compose:
 
 ```bash
 docker run -d --name nespresso-stats -p 8787:8787 \
-  -v "$PWD/data:/data" ghcr.io/avpnusr/nespresso-stats:0.91
+  -v "$PWD/data:/data" ghcr.io/avpnusr/nespresso-stats:0.95
 ```
 
 The vision backend is configurable from the shell or a `.env` file beside the
@@ -71,6 +71,10 @@ Two of the same-shape settings are about access:
   pointing at your machine). Browsing by IP address (`<lan-ip>:8787`), `localhost`
   and the healthcheck keep working without it. Set it in the `.env` next to the
   compose file.
+- **`TRUST_PROXY`** — off by default. Set it only when a reverse proxy you control sits in
+  front *and* overwrites `X-Forwarded-Host`; the header is client-supplied, so honouring it
+  unconditionally would let a DNS-rebinding page pass the `PUBLIC_HOST` allowlist. A proxy
+  that preserves the original `Host` (Caddy's default) needs neither.
 - **`AUTH_TOKEN`** — empty by default (the LAN-trust model, nothing changes). When
   set, every `/api/*` route requires `Authorization: Bearer <token>` (401 otherwise)
   — meant for automation that can send headers, and for deployments that leave the

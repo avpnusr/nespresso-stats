@@ -60,6 +60,10 @@ PORT = int(os.environ.get("PORT", "8787"))
 # proxy rewrites it and sends X-Forwarded-Host). A name not in this allowlist is refused
 # on /api/* — see host_allowed for why that closes DNS rebinding.
 PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "").strip().lower()
+# X-Forwarded-Host is a client header: only a proxy that *overwrites* it makes it worth
+# anything, so it is not trusted at all unless the operator says one is in front. Off by
+# default — a page that rebinds its own name onto this box must not hand us a Host we accept.
+TRUST_PROXY = bool(os.environ.get("TRUST_PROXY", "").strip())
 # When set, every /api route wants `Authorization: Bearer <token>` (401 otherwise);
 # when empty, the usual LAN-trust model applies and nothing changes.
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
@@ -387,7 +391,9 @@ def resolve_pending(conn, capsule_id: int, brew_id: int | None = None) -> dict:
 
 
 def dismiss_pending(conn, brew_id: int) -> dict:
-    conn.execute("DELETE FROM brews WHERE id = ? AND capsule_id IS NULL", (brew_id,))
+    # delta < 0: a maintenance event is also capsule-less, and dismissing one would erase
+    # the last-cleaned record (maintenance_state would report it never done).
+    conn.execute("DELETE FROM brews WHERE id = ? AND capsule_id IS NULL AND delta < 0", (brew_id,))
     conn.commit()
     return {"action": "dismissed"}
 
@@ -558,7 +564,13 @@ def match_capsule(conn, name: str, line: str | None = None) -> dict | None:
     return None
 
 
-def vision_pick(image_data_url: str, candidates: list[dict], line: str = DEFAULT_LINE) -> dict | None:
+def _vision_content(req) -> str:
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        return json.load(resp)["choices"][0]["message"].get("content", "")
+
+
+def vision_pick(image_data_url: str, candidates: list[dict], line: str = DEFAULT_LINE,
+                fetch=None) -> dict | None:
     """Ask an OpenAI-compatible vision model. Exact when the photo shows a printed name — on a
     capsule the name sits next to the cup size (Vertuo: around the aluminium base; Original: on
     the top foil) or on a sleeve/box. On a top-down photo of the bare dome it only refines colour."""
@@ -587,8 +599,7 @@ def vision_pick(image_data_url: str, candidates: list[dict], line: str = DEFAULT
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {VISION_API_KEY}"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            content = json.load(resp)["choices"][0]["message"].get("content", "")
+        content = (fetch or _vision_content)(req)
     except Exception as err:  # noqa: BLE001 - vision is best-effort
         return {"error": str(err)}
     match = re.search(r"\{.*\}", content, re.S)
@@ -612,7 +623,8 @@ def vision_pick(image_data_url: str, candidates: list[dict], line: str = DEFAULT
             "text": picked.get("text", "")}
 
 
-def identify(conn, color: str, image_data_url: str | None = None, line: str | None = None) -> dict:
+def identify(conn, color: str, image_data_url: str | None = None, line: str | None = None,
+             fetch=None) -> dict:
     """Closest capsules to a photo. Everything here is scoped to the machine's capsule system:
     an Original Line machine must never be offered a Vertuo pod."""
     line = valid_line(line or machine_line(conn))
@@ -623,7 +635,7 @@ def identify(conn, color: str, image_data_url: str | None = None, line: str | No
     if image_data_url:
         # only data: images are forwarded — a client-supplied http(s) URL would make the
         # vision backend fetch whatever it points at (an SSRF primitive from its host)
-        result["vision"] = vision_pick(image_data_url, candidates, line) \
+        result["vision"] = vision_pick(image_data_url, candidates, line, fetch) \
             if image_data_url.startswith("data:image/") else None
     vis = result["vision"]
     if vis and not vis.get("error"):
@@ -677,6 +689,13 @@ def save_setup(conn: sqlite3.Connection, counts: dict) -> dict:
             "SELECT 1 FROM brews WHERE capsule_id = ? LIMIT 1", (cid,)
         ).fetchone():
             conn.execute("DELETE FROM capsules WHERE id = ?", (cid,))
+            removed += 1
+    # The other line's seed rows are never in `counts`, so they would stay behind at count 0 —
+    # "owned" (hidden from the known picker) and shown as empty tiles after a line switch.
+    # An unused one has nothing to keep; stock or brew history on the other line stays.
+    for r in conn.execute("SELECT id FROM capsules WHERE line != ? AND count = 0", (line,)):
+        if not conn.execute("SELECT 1 FROM brews WHERE capsule_id = ? LIMIT 1", (r["id"],)).fetchone():
+            conn.execute("DELETE FROM capsules WHERE id = ?", (r["id"],))
             removed += 1
     conn.execute("INSERT OR REPLACE INTO settings VALUES ('setup_done', '1')")
     conn.commit()
@@ -848,6 +867,20 @@ def notify_check(conn: sqlite3.Connection, send=None) -> None:
     conn.commit()
 
 
+def _capsule_key(c: dict) -> str:
+    """Identity for the new-capsule episode list: sku, or the name for a sku-less entry."""
+    return (c.get("sku") or "").strip() or "name:" + (c.get("name") or "").strip().lower()
+
+
+def _parse_keys(stored: str) -> set[str]:
+    """`notified_new` is stored as a JSON list: a capsule name may contain a comma, which the
+    old comma-joined form splits into keys that never match (a re-push on every pull)."""
+    try:
+        return set(json.loads(stored))
+    except ValueError:
+        return {x for x in stored.split(",") if x}  # installs written before the JSON form
+
+
 def notify_new_capsules(conn, entries: list[dict] | None = None, send=None) -> None:
     """One push when a scanner pull turned up capsules the owner does not have yet, on the
     machine's line (same rule as the dashboard's banner — and one push total, the banner
@@ -855,16 +888,19 @@ def notify_new_capsules(conn, entries: list[dict] | None = None, send=None) -> N
     pruned: a delisted capsule must not re-announce when the store relists it. The very
     first check silently takes the whole current diff as read — an upgraded install must
     not announce the entire store; only things from then on are new."""
+    remote = remote_entries() if entries is None else entries
     line = machine_line(conn)
-    keyed = {((c.get("sku") or "").strip() or "name:" + (c["name"] or "").strip().lower()): c
-             for c in new_for_line(conn, line, entries)}
     stored = get_setting(conn, "notified_new", None)
     if stored is None:
+        # Every line is baselined: a later machine-line switch must not announce the backlog
+        # of the other line (the banner already shows it, and README promises "whole store").
+        baseline = {_capsule_key(c) for ln in FAMILIES for c in new_for_line(conn, ln, remote)}
         conn.execute("INSERT OR REPLACE INTO settings VALUES ('notified_new', ?)",
-                     (",".join(keyed),))
+                     (json.dumps(sorted(baseline)),))
         conn.commit()
         return
-    announced = {x for x in stored.split(",") if x}
+    keyed = {_capsule_key(c): c for c in new_for_line(conn, line, remote)}
+    announced = _parse_keys(stored)
     todo = [k for k in keyed if k not in announced]
     if not todo:
         return
@@ -881,7 +917,7 @@ def notify_new_capsules(conn, entries: list[dict] | None = None, send=None) -> N
             # banner still shows them
             print(f"notify failed: {err}", file=sys.stderr)
     conn.execute("INSERT OR REPLACE INTO settings VALUES ('notified_new', ?)",
-                 (",".join(sorted(announced | set(todo))),))
+                 (json.dumps(sorted(announced | set(todo))),))
     conn.commit()
 
 
@@ -919,6 +955,8 @@ def import_data(conn: sqlite3.Connection, data: dict) -> dict:
     shape is validated; a failure mid-import rolls the transaction back, so a malformed
     upload can't half-wipe the db. Only real schema columns are inserted (values stay
     parameterized), so a hostile file can't reach SQL itself."""
+    if data.get("format") not in (None, "nespresso-stats-backup"):
+        raise ValueError("not a nespresso-stats backup")
     for table in ("capsules", "brews", "settings"):
         if not isinstance(data.get(table), list):
             raise ValueError(f"not a backup: missing '{table}'")
@@ -927,6 +965,8 @@ def import_data(conn: sqlite3.Connection, data: dict) -> dict:
             valid = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
             conn.execute(f"DELETE FROM {table}")
             for row in data[table]:
+                if not isinstance(row, dict):  # a string row would raise AttributeError below
+                    raise ValueError(f"bad row in '{table}'")
                 cols = {k: v for k, v in row.items() if k in valid}
                 # same validation a fresh /api/settings write would apply — a restored file
                 # must not smuggle in a file:/ or credential-bearing notify URL
@@ -984,6 +1024,25 @@ def remote_entries() -> list[dict]:
         return list(_scanner_entries)
 
 
+def sanitise_entries(data) -> list[dict]:
+    """Remote entries we can use. The catalogue is scraped JSON, so a field of the wrong type
+    ({"sku": 5}) must not reach merge_catalogue and take /api/state down with it."""
+    if not isinstance(data, dict):
+        return []
+    out = []
+    for e in data.get("capsules") or []:
+        if not isinstance(e, dict):
+            continue
+        sku = e["sku"] if isinstance(e.get("sku"), str) else ""
+        name = e["name"] if isinstance(e.get("name"), str) else ""
+        # a non-string line is unhashable in valid_line's `in FAMILIES`; the entry stays
+        # usable with the default line if the field is junk
+        line = e["line"] if isinstance(e.get("line"), str) else ""
+        if sku or name:
+            out.append({**e, "sku": sku, "name": name, "line": line})
+    return out
+
+
 def refresh_scanner() -> list[dict]:
     """Fetch the remote catalogue once. Keeps the last good data on failure and never
     raises — a dead host must not break the dashboard."""
@@ -991,11 +1050,10 @@ def refresh_scanner() -> list[dict]:
         return []
     try:
         with urllib.request.urlopen(SCANNER_URL, timeout=10) as resp:
-            data = json.loads(resp.read())
-        good = [e for e in data.get("capsules", []) if isinstance(e, dict)
-                and (e.get("sku") or e.get("name"))]
-        with _scanner_lock:
-            _scanner_entries[:] = good
+            good = sanitise_entries(json.loads(resp.read()))
+        if good:  # a malformed or empty payload keeps the last good pull
+            with _scanner_lock:
+                _scanner_entries[:] = good
     except Exception as err:  # noqa: BLE001 - the remote catalogue is best-effort
         print(f"scanner catalogue: {err}", file=sys.stderr)
     return remote_entries()
@@ -1057,15 +1115,22 @@ def known_catalogue() -> list[dict]:
     return merge_catalogue(local_catalogue(), remote_entries())[0]
 
 
+def owned_identity(conn) -> tuple[set[str], set[tuple[str, str]]]:
+    """What the owner already has: sku first, (line, name) second. The one ownership rule the
+    tile list and the new-capsule banner must agree on."""
+    skus = {r["sku"] for r in conn.execute("SELECT sku FROM capsules") if r["sku"]}
+    # keyed by line: owning Vertuo Colombia must not hide Original Colombia
+    names = {(r["line"], r["name"].strip().lower())
+             for r in conn.execute("SELECT name, line FROM capsules")}
+    return skus, names
+
+
 def new_for_line(conn, line: str, entries: list[dict] | None = None) -> list[dict]:
     """Remote-only catalogue entries the owner does not have yet (line-scoped) — the
     dashboard's "new capsules" banner and, on a scanner pull, the ntfy push. Ownership is
     sku when both sides have one, the name otherwise (same rule as picked `known`)."""
     remote = remote_entries() if entries is None else entries
-    owned_skus = {r["sku"] for r in conn.execute("SELECT sku FROM capsules") if r["sku"]}
-    # keyed by line: owning Vertuo Colombia must not hide Original Colombia
-    owned_names = {(r["line"], r["name"].strip().lower())
-                   for r in conn.execute("SELECT name, line FROM capsules")}
+    owned_skus, owned_names = owned_identity(conn)
     _, new = merge_catalogue(local_catalogue(), remote)
     return [c for c in new if entry_line(c) == line
             and not ((c.get("sku") or "").strip() in owned_skus
@@ -1082,9 +1147,7 @@ def current_state(conn) -> dict:
     # Known-but-not-inventoried capsules of this line, for the "add capsule" picker.
     # Ownership is the sku when both sides have one (the store renames capsules), the name
     # otherwise (a hand-added capsule has no sku). `known` is the catalogue you don't own yet.
-    owned_names = {(r["line"], r["name"].strip().lower())
-                   for r in conn.execute("SELECT name, line FROM capsules")}
-    owned_skus = {r["sku"] for r in conn.execute("SELECT sku FROM capsules") if r["sku"]}
+    owned_skus, owned_names = owned_identity(conn)
 
     def owned(c: dict) -> bool:
         sku = (c.get("sku") or "").strip()
@@ -1119,10 +1182,17 @@ def current_state(conn) -> dict:
     order = [int(x) for x in str(machine.get("capsule_order") or "").split(",") if x.isdigit()]
     pos = {cid: i for i, cid in enumerate(order)}
     capsules.sort(key=lambda c: (pos.get(c["id"], len(order)), c["family"], c["name"]))
+    # Same line rule as brew_stats: the activity list feeds "change"/"undo", which must not
+    # touch the other line's stock. capsule_id is needed to preselect the brew's capsule.
+    # A brew orphaned by a pre-2026 capsule deletion has no line left — it stays visible on
+    # both lines (like a legacy capsule-less row), because undo can still clear it.
     brews = [dict(r) for r in conn.execute(
-        """SELECT b.id, b.ts, b.source, b.family, b.delta, c.name AS capsule_name
+        """SELECT b.id, b.capsule_id, b.ts, b.source, b.family, b.delta,
+                  c.name AS capsule_name
            FROM brews b LEFT JOIN capsules c ON c.id = b.capsule_id
-           ORDER BY b.id DESC LIMIT 12"""
+           WHERE c.line = ? OR (b.capsule_id IS NULL AND (b.line = ? OR b.line = ''))
+                 OR (b.capsule_id IS NOT NULL AND c.id IS NULL)
+           ORDER BY b.id DESC LIMIT 12""", (line, line)
     )]
     # only this line's pendings (a row from before the line column stays visible on both)
     pending = [dict(r) for r in conn.execute(
@@ -1233,8 +1303,16 @@ class Handler(BaseHTTPRequestHandler):
     def _conn(self) -> sqlite3.Connection:
         return connect()
 
+    def _forwarded_host(self) -> str:
+        """X-Forwarded-Host is whatever the client sent, so it is only used when a proxy is
+        declared (TRUST_PROXY) *and* overwrites it. Trusting it blindly handed a DNS-rebinding
+        page the whole API; the last hop is the one a proxy appends."""
+        if not TRUST_PROXY:
+            return ""
+        return (self.headers.get("X-Forwarded-Host") or "").split(",")[-1].strip()
+
     def _host_ok(self) -> bool:
-        if host_allowed(self.headers.get("Host"), self.headers.get("X-Forwarded-Host")):
+        if host_allowed(self.headers.get("Host"), self._forwarded_host()):
             return True
         print(f"rejected host: {self.headers.get('Host')!r}", file=sys.stderr)
         self._send(403, {"error": "request host not allowed"})
@@ -1296,8 +1374,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _same_origin(self) -> bool:
         origin = self.headers.get("Origin")
-        forwarded = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
-        if origin_allowed(origin, self.headers.get("Host"), forwarded):
+        if origin_allowed(origin, self.headers.get("Host"), self._forwarded_host()):
             return True
         # Kept out of the access log (log_message is silenced), so name it here: a proxy
         # that rewrites Host without X-Forwarded-Host would otherwise 403 silently.
@@ -1392,13 +1469,15 @@ class Handler(BaseHTTPRequestHandler):
         intensity = max(0, min(13, int(payload.get("intensity") or 0)))
         special = 1 if payload.get("special") else 0
         if payload.get("id"):
-            conn.execute(
+            cur = conn.execute(
                 """UPDATE capsules SET name=:name, sku=:sku, family=:family, color=:color,
                    image=:image, notes=:notes, count=:count, price=:price,
                    threshold=:threshold, intensity=:intensity, special=:special WHERE id=:id""",
                 {**fields, "count": count, "price": price, "threshold": threshold,
                  "intensity": intensity, "special": special, "id": payload["id"]},
             )
+            if cur.rowcount == 0:
+                raise ValueError("capsule not found")
         else:
             # A new capsule belongs to the machine in use, so the dashboard keeps showing it.
             conn.execute(
@@ -1541,6 +1620,30 @@ def selftest() -> None:
         assert r["vision"] is None, r["vision"]  # dropped before any fetch
         r = identify(conn, "#000000", "data:image/png;base64,aGk=")
         assert r["vision"] and r["vision"].get("error"), r["vision"]  # the backend was reached
+
+        # the happy path (reply parsing, the single-quote repair, the "the catalogue knows it
+        # but you do not own it" hint) with a canned responder — still no network, and the
+        # port-9 case above only ever proved the failure path
+        own_name = conn.execute(
+            "SELECT name FROM capsules WHERE line='vertuo' ORDER BY id LIMIT 1").fetchone()[0]
+        canned = lambda body: identify(
+            conn, "#000000", "data:image/png;base64,aGk=",
+            fetch=lambda req, b=body: b)
+        r = canned(json.dumps({"text": own_name.upper() + " 230 ML", "reason": "read"}))
+        assert r["vision"]["name"] == own_name, r["vision"]  # read off the pod wins
+        assert r["candidates"][0]["name"] == own_name, r["candidates"]
+        # small models wrap JSON in fences and quote with single quotes
+        r = canned("```json\n{'text': '', 'name': %r, 'reason': 'x'}\n```" % own_name)
+        assert r["vision"]["name"] == own_name, r["vision"]
+        r = canned("no json at all")
+        assert r["vision"]["error"] == "unparseable", r["vision"]
+        missing = next((c["name"] for c in known_catalogue()
+                        if entry_line(c) == "vertuo" and c["name"] and not conn.execute(
+                            "SELECT 1 FROM capsules WHERE line='vertuo' AND name=?",
+                            (c["name"],)).fetchone()), None)
+        if missing:
+            r = canned(json.dumps({"text": missing.upper(), "reason": "read"}))
+            assert r["vision"]["not_owned"] is True, r["vision"]
         g["VISION_BASE_URL"], g["VISION_MODEL"] = old_v, old_m
 
         # single capsule of a family → auto decrement (Fortado is the only Gran Lungo)
@@ -1656,6 +1759,11 @@ def selftest() -> None:
         conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'original')")
         assert other_line in {b["capsule_id"] for b in brew_stats(conn)["brews"]}
         conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'vertuo')")
+        # the activity list follows the same rule, and carries capsule_id (the UI preselects
+        # the brew's capsule from it — otherwise "change" reassigns it to the first tile)
+        activity = current_state(conn)["brews"]
+        assert all("capsule_id" in b for b in activity), activity
+        assert other_line not in {b["capsule_id"] for b in activity}, activity
 
         # an unknown brew (no capsule) counts for the line in use; a brew orphaned by a
         # pre-2026 capsule deletion has no line and must not be counted for either
@@ -1709,6 +1817,21 @@ def selftest() -> None:
         h4._send = lambda code, *a, **k: gate_codes.append(code)
         assert h4._api_gatekeeper() is False and gate_codes == [403], gate_codes
 
+        # X-Forwarded-Host is client-controlled: honouring it by default let a rebinding page
+        # launder its name past the allowlist, and a pass-through proxy forwards the forgery.
+        # The last hop is the proxy's own value (TRUST_PROXY, off unless declared).
+        h4.headers = {"Host": "attacker.com:8787", "Origin": "http://attacker.com:8787",
+                      "X-Forwarded-Host": "127.0.0.1"}
+        gate_codes.clear()
+        assert h4._api_gatekeeper() is False and gate_codes == [403], gate_codes
+        g["TRUST_PROXY"] = True  # a declared proxy that overwrites the header still works
+        g["PUBLIC_HOST"] = "ncs.khmls.net"
+        h4.headers = {"Host": "backend", "X-Forwarded-Host": "ncs.khmls.net"}
+        gate_codes.clear()
+        assert h4._api_gatekeeper() is True and gate_codes == [], gate_codes
+        g["TRUST_PROXY"] = False
+        g["PUBLIC_HOST"] = ""
+
         # AUTH_TOKEN: unset = open (the default), set = Bearer header required on /api/*
         h5 = Handler.__new__(Handler)
         h5._send = h4._send
@@ -1746,6 +1869,13 @@ def selftest() -> None:
         ms = {m["task"]: m for m in current_state(conn)["maintenance"]}
         assert not ms["clean"]["due"] and ms["descale"]["due"], ms
         assert all(p["family"] for p in current_state(conn)["pending"]), "maintenance leaked into pending"
+        # dismissing must only ever remove a queued brew — a maintenance event is also
+        # capsule-less, and dropping it would claim the task was never done
+        maintenance_id = conn.execute(
+            "SELECT id FROM brews WHERE source = 'clean' ORDER BY id DESC LIMIT 1").fetchone()[0]
+        dismiss_pending(conn, maintenance_id)
+        assert conn.execute("SELECT 1 FROM brews WHERE id = ?", (maintenance_id,)).fetchone(), \
+            "dismiss deleted a maintenance event"
         conn.execute("UPDATE brews SET ts = ? WHERE source = 'clean'", ("2000-01-01T00:00:00+00:00",))
         conn.commit()
         assert {m["task"]: m for m in current_state(conn)["maintenance"]}["clean"]["due"]
@@ -1785,13 +1915,18 @@ def selftest() -> None:
         init_db(setup_conn, CATALOG)
         assert not setup_conn.execute("SELECT 1 FROM settings WHERE key='setup_done'").fetchone()
         ids = [r[0] for r in setup_conn.execute("SELECT id FROM capsules WHERE line='vertuo'")]
+        other_ids = [r[0] for r in setup_conn.execute("SELECT id FROM capsules WHERE line='original'")]
         keep, brewed = ids[0], ids[1]
         log_brew(setup_conn, brewed, "Mug", "manual")
         setup_conn.commit()
         res = save_setup(setup_conn, {str(keep): 7, **{str(i): 0 for i in ids[1:]}})
-        assert res["updated"] == len(ids) and res["removed"] == len(ids) - 2, res
+        assert res["updated"] == len(ids) and res["removed"] == len(ids) - 2 + len(other_ids), res
         assert setup_conn.execute("SELECT count FROM capsules WHERE id=?", (keep,)).fetchone()[0] == 7
         assert setup_conn.execute("SELECT 1 FROM capsules WHERE id=?", (brewed,)).fetchone()
+        # the other line's unused seed rows go too, so a later line switch starts from the
+        # known picker instead of a wall of empty tiles
+        assert not [i for i in other_ids
+                    if setup_conn.execute("SELECT 1 FROM capsules WHERE id=?", (i,)).fetchone()]
         assert setup_conn.execute("SELECT value FROM settings WHERE key='setup_done'").fetchone()[0] == "1"
         try:
             save_setup(setup_conn, {})  # an empty payload must not mark an untouched seed done
@@ -1843,6 +1978,14 @@ def selftest() -> None:
             raise AssertionError("expected import failure")
         except (ValueError, sqlite3.Error):
             pass
+        # a row that is not an object, and a file that is not one of ours, are both a 400 (the
+        # row would otherwise raise AttributeError and kill the request thread)
+        for bad in ({**backup, "brews": ["not a row"]}, {**backup, "format": "other-backup"}):
+            try:
+                import_data(conn, bad)
+                raise AssertionError(f"expected ValueError for {bad.get('format', 'row')}")
+            except ValueError:
+                pass
         assert conn.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] == len(backup["capsules"]), \
             "failed import must not wipe the db"
         # a restored backup cannot smuggle in what /api/settings would have refused anyway
@@ -1898,6 +2041,15 @@ def selftest() -> None:
         n = len(sent)
         notify_check(conn, send=record)
         assert len(sent) == n, sent  # no duplicates on re-check
+        # upkeep re-arms: marking a task done ends its episode, the next due date pushes again
+        log_maintenance(conn, "clean")
+        notify_check(conn, send=record)
+        assert len(sent) == n, sent[n:]  # done, so nothing is due
+        conn.execute("UPDATE brews SET ts = ? WHERE source = 'clean'",
+                     ("2000-01-01T00:00:00+00:00",))
+        conn.commit()
+        notify_check(conn, send=record)
+        assert any("Cleaning" in m and "is due" in m for m in sent[n:]), sent[n:]
         conn.execute("UPDATE capsules SET count = 9 WHERE name = 'Intenso'")
         conn.commit()
         notify_check(conn, send=record)  # restock ends the episode
@@ -2049,6 +2201,15 @@ def selftest() -> None:
         h._upsert_capsule(conn, {"name": "Test Kapsel", "family": "Lungo", "count": 1})
         assert conn.execute("SELECT line FROM capsules WHERE name='Test Kapsel'").fetchone()[0] \
             == "original"
+        # an edit that changes nothing is a normal save, not a missing capsule
+        tid = conn.execute("SELECT id FROM capsules WHERE name='Test Kapsel'").fetchone()[0]
+        h._upsert_capsule(conn, {"id": tid, "name": "Test Kapsel", "family": "Lungo", "count": 1})
+        # an id that does not exist must not answer "ok" while changing nothing
+        try:
+            h._upsert_capsule(conn, {"id": 99999, "name": "Ghost", "family": "Mug"})
+            raise AssertionError("expected ValueError for an unknown capsule id")
+        except ValueError:
+            pass
 
         # scanner catalogue: the diff is sku-first (store renames stay known), the hint is
         # line-scoped, and the picker carries the remote entries
@@ -2069,6 +2230,14 @@ def selftest() -> None:
             [{"name": "Colombia", "sku": "2", "line": "original", "family": "Espresso"}])
         assert [e["name"] for e in new2] == ["Colombia"] and new2[0]["sku"] == "2", new2
         assert new[0]["family"] == "Mug" and new[0]["line"] == "vertuo"  # normalised for the picker
+        # the catalogue is scraped JSON: a field of the wrong type is dropped, not crashed on
+        assert [e["name"] for e in sanitise_entries({"capsules": [
+            {"sku": 5, "name": "Typed Sku"}, {"name": 3}, [], "junk",
+            {"sku": "9"}, {"name": "A", "sku": "10"}]})] == ["Typed Sku", "", "A"]
+        assert sanitise_entries([]) == [] and sanitise_entries(None) == []
+        # a list as `line` is unhashable in valid_line — must be a usable entry, not a crash
+        assert merge_catalogue([], sanitise_entries({"capsules": [
+            {"name": "Bad Line", "sku": "11", "line": []}]}))[1][0]["line"] == "vertuo"
 
         _scanner_entries[:] = [
             {"name": "Vertuo New", "sku": "v1", "line": "vertuo", "family": "Mug"},
@@ -2082,6 +2251,18 @@ def selftest() -> None:
         old_url, SCANNER_URL = SCANNER_URL, "http://127.0.0.1:9/"
         assert refresh_scanner()[0]["name"] == "Vertuo New"
         SCANNER_URL = old_url
+
+        # ... and so does an empty or malformed pull (no stub would silently wipe the banner)
+        class _FakeResp:
+            def read(self): return b'{"capsules": []}'
+            def __enter__(self): return self
+            def __exit__(self, *exc): return False
+        real_urlopen = urllib.request.urlopen
+        urllib.request.urlopen = lambda *a, **k: _FakeResp()
+        try:
+            assert [e["name"] for e in refresh_scanner()] == ["Vertuo New", "Original New"]
+        finally:
+            urllib.request.urlopen = real_urlopen
 
         # price watch: the store's current price reaches /api/state on a sku match of the
         # machine's line — but only when it moved away from the price the owner paid
@@ -2110,14 +2291,42 @@ def selftest() -> None:
             {"name": "Original New", "sku": "o1", "line": "original", "family": "Lungo"},
         ], send=record_new)
         assert not sent, sent  # silent baseline
-        assert get_setting(conn, "notified_new") == "v1", get_setting(conn, "notified_new")
+        # both lines, so a later machine-line switch does not announce the other line's backlog
+        assert _parse_keys(get_setting(conn, "notified_new")) == {"o1", "v1"}, \
+            get_setting(conn, "notified_new")
+        # the stored form is JSON (a name may hold a comma); an upgraded install still has
+        # the old comma-joined value and must keep reading it
+        assert _parse_keys('["name:vanilla, limited"]') == {"name:vanilla, limited"}
+        assert _parse_keys("o1,v1") == {"o1", "v1"}
+        # a comma in a sku-less name must survive the stored form, or it re-pushes every pull
+        comma = [{"name": "Vanilla, Limited", "sku": "", "line": "vertuo", "family": "Mug"}]
+        notify_new_capsules(conn, entries=comma, send=record_new)
+        assert len(sent) == 1 and "Vanilla, Limited" in sent[0], sent
+        notify_new_capsules(conn, entries=comma, send=record_new)
+        assert len(sent) == 1, sent  # no repeat
+        conn.execute("DELETE FROM settings WHERE key = 'notified_new'")
+        notify_new_capsules(conn, entries=[  # the baseline the line-switch check below expects
+            {"name": "Vertuo A", "sku": "v1", "line": "vertuo", "family": "Mug"},
+            {"name": "Original New", "sku": "o1", "line": "original", "family": "Lungo"},
+        ], send=record_new)
+        assert len(sent) == 1, sent
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'original')")
+        n = len(sent)
+        notify_new_capsules(conn, entries=[{"name": "Original New", "sku": "o1",
+                                            "line": "original", "family": "Lungo"}],
+                            send=record_new)
+        assert len(sent) == n, sent
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'vertuo')")
         pull2 = [{"name": "Vertuo B", "sku": "v2", "line": "vertuo", "family": "Mug"},
                  {"name": "Original B", "sku": "o2", "line": "original", "family": "Lungo"}]
+        n = len(sent)
         notify_new_capsules(conn, entries=pull2, send=record_new)
-        assert len(sent) == 1 and "Vertuo B" in sent[0] and "Original B" not in sent[0], sent
+        assert len(sent) == n + 1 and "Vertuo B" in sent[-1] and "Original B" not in sent[-1], sent
         n = len(sent)
         notify_new_capsules(conn, entries=pull2, send=record_new)
         assert len(sent) == n, sent  # no repeat for the same capsule
+        # what arrived while the other line was in use is announced on the switch (it was
+        # never announced before) — only the baseline is silent for both lines
         conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'original')")
         notify_new_capsules(conn, entries=pull2, send=record_new)
         assert len(sent) == n + 1 and all(x in sent[-1] for x in ("Original", "B")), sent
