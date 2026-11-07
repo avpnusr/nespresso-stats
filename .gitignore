@@ -1,7 +1,7 @@
 __pycache__/
 *.py[cod]
 
-data/*.db
+*.db
 *.db-journal
 *.sqlite3
 
@@ -9,5 +9,5 @@ data/*.db
 .DS_Store
 
 AGENTS.md
-data/*.db-shm
-data/*.db-wal
+*.db-shm
+*.db-wal

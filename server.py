@@ -13,6 +13,7 @@ import ast
 import hmac
 import ipaddress
 import json
+import math
 import mimetypes
 import os
 import re
@@ -61,9 +62,29 @@ PORT = int(os.environ.get("PORT", "8787"))
 # on /api/* — see host_allowed for why that closes DNS rebinding.
 PUBLIC_HOST = os.environ.get("PUBLIC_HOST", "").strip().lower()
 # X-Forwarded-Host is a client header: only a proxy that *overwrites* it makes it worth
-# anything, so it is not trusted at all unless the operator says one is in front. Off by
-# default — a page that rebinds its own name onto this box must not hand us a Host we accept.
-TRUST_PROXY = bool(os.environ.get("TRUST_PROXY", "").strip())
+# anything, so it is honoured only from an address listed here (comma-separated proxy
+# IPs/CIDRs). Off by default — a page that rebinds its own name onto this box must not
+# hand us a Host we accept, and the peer address is the one thing it cannot forge.
+TRUST_PROXY = os.environ.get("TRUST_PROXY", "").strip()
+
+
+def _proxy_nets(value: str) -> list:
+    nets = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            print(f"TRUST_PROXY: ignoring {item!r} — expected a proxy IP or CIDR",
+                  file=sys.stderr)
+    return nets
+
+
+TRUSTED_PROXIES = _proxy_nets(TRUST_PROXY)
+if TRUST_PROXY and not TRUSTED_PROXIES:
+    print("TRUST_PROXY names no proxy address; X-Forwarded-Host is ignored", file=sys.stderr)
 # When set, every /api route wants `Authorization: Bearer <token>` (401 otherwise);
 # when empty, the usual LAN-trust model applies and nothing changes.
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
@@ -208,6 +229,19 @@ def init_db(conn: sqlite3.Connection, seed_path: Path = CATALOG) -> None:
     conn.commit()
 
 
+def repair_nonfinite(conn: sqlite3.Connection) -> None:
+    """Zero every numeric value SQLite stores as ±inf. No finite double exceeds 1e308, so the
+    bound selects infinity only — and it must run after a restore too: numeric affinity turns
+    the *string* "9e999" into REAL inf, where the JSON parse hooks never see it."""
+    for table, cols in (("capsules", ("price", "count", "threshold", "intensity")),
+                        ("brews", ("delta",))):
+        for col in cols:
+            # a crafted backup can put a non-numeric string into an INTEGER-affinity column;
+            # undo_brew would then raise TypeError and drop the connection
+            conn.execute(f"UPDATE {table} SET {col} = 0 WHERE abs({col}) > 1e308"
+                         f" OR typeof({col}) NOT IN ('integer', 'real')")
+
+
 def migrate(conn: sqlite3.Connection) -> None:
     """Add columns introduced after the first release (old DBs)."""
     capsule_cols = {r[1] for r in conn.execute("PRAGMA table_info(capsules)")}
@@ -249,6 +283,9 @@ def migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "UPDATE brews SET line = COALESCE((SELECT line FROM capsules WHERE id = brews.capsule_id), '')"
             " WHERE capsule_id IS NOT NULL")
+    # An older release accepted a non-finite price, and a crafted backup could have carried
+    # inf in any numeric column; neither is JSON, and one of them freezes /api/state for good.
+    repair_nonfinite(conn)
     conn.commit()
 
 
@@ -262,42 +299,51 @@ def _catalogue_skus() -> dict[tuple[str, str], str]:
             if c.get("sku")}
 
 
-def backfill_skus(conn: sqlite3.Connection) -> None:
+def backfill_skus(conn: sqlite3.Connection, commit: bool = True) -> None:
     """One-time for DBs that predate the sku column: stamp each row with the catalogue sku it
     belongs to and rename the rows whose store name changed. A row only gains a sku while it is
     blank, and a rename never lands on a name the owner already uses (the catalogue is the
     source of both the new name and its sku)."""
     if not CATALOG.exists():
         return
-    # name -> sku, last entry winning: two rename targets are shared with the Vertuo line
-    # (Colombia, Kahawa Ya Congo) and the Original Line entry is the one that comes last.
-    sku_by_name = {c["name"]: c["sku"] for c in json.loads(CATALOG.read_text()) if c.get("sku")}
+    # A rename is line-scoped: both lines share names (Colombia, Kahawa Ya Congo), so the
+    # collision check must not let one line's row block the other line's rename.
     for old, new in CATALOGUE_RENAMES.items():
-        sku = sku_by_name.get(new)
-        if sku:
+        for (name, line), sku in _catalogue_skus().items():
+            if name != new:
+                continue
             conn.execute(
-                "UPDATE capsules SET name = ?, sku = ? WHERE name = ? AND sku = ''"
-                " AND NOT EXISTS (SELECT 1 FROM capsules WHERE name = ?)",
-                (new, sku, old, new),
+                "UPDATE capsules SET name = ?, sku = ? WHERE name = ? AND sku = '' AND line = ?"
+                " AND NOT EXISTS (SELECT 1 FROM capsules WHERE name = ? AND line = ?)",
+                (new, sku, old, line, new, line),
             )
-    fill_empty_skus(conn)
+    fill_empty_skus(conn, commit)
 
 
-def fill_empty_skus(conn: sqlite3.Connection) -> None:
+def fill_empty_skus(conn: sqlite3.Connection, commit: bool = True) -> None:
     """Stamp a row that still has no sku, whenever the catalogue learned it (e.g. a capsule
-    the store had delisted when the owner added it). Never overwrites a set sku."""
+    the store had delisted when the owner added it). Never overwrites a set sku.
+    commit=False for /api/import, whose transaction must stay all-or-nothing."""
     for (name, line), sku in _catalogue_skus().items():
         conn.execute("UPDATE capsules SET sku = ? WHERE name = ? AND line = ? AND sku = ''",
                      (sku, name, line))
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # --------------------------------------------------------------------------- logic
 
-def dec(conn, capsule_id: int, delta: int = -1) -> None:
+def dec(conn, capsule_id: int, delta: int = -1) -> int:
+    """Apply a stock change, clamped at 0, and return what actually changed. Callers log the
+    returned value: undoing a brew that hit 0 must not invent stock that never existed."""
+    row = conn.execute("SELECT count FROM capsules WHERE id = ?", (capsule_id,)).fetchone()
+    if row is None:
+        return 0
+    applied = max(delta, -max(0, row["count"])) if delta < 0 else delta
     conn.execute(
         "UPDATE capsules SET count = MAX(0, count + ?) WHERE id = ?", (delta, capsule_id)
     )
+    return applied
 
 
 def log_brew(conn, capsule_id, family, source, ts=None, delta=-1, line=None) -> int:
@@ -322,8 +368,8 @@ def brew_detected(conn, family, source="auto", capsule=None, line=None) -> dict:
     if capsule:
         hit = match_capsule(conn, capsule, line)
         if hit:  # known capsule name, no family guessing needed
-            dec(conn, hit["id"])
-            log_brew(conn, hit["id"], hit["family"], source)
+            delta = dec(conn, hit["id"])
+            log_brew(conn, hit["id"], hit["family"], source, delta=delta)
             conn.commit()
             return {"action": "decremented", "family": hit["family"], "capsule": hit["name"]}
     fam = normalize_family(family, line)
@@ -335,8 +381,8 @@ def brew_detected(conn, family, source="auto", capsule=None, line=None) -> dict:
         " AND count > 0 ORDER BY name", (line, fam)
     ).fetchall()
     if len(rows) == 1:
-        dec(conn, rows[0]["id"])
-        log_brew(conn, rows[0]["id"], fam, source)
+        delta = dec(conn, rows[0]["id"])
+        log_brew(conn, rows[0]["id"], fam, source, delta=delta)
         conn.commit()
         return {"action": "decremented", "family": fam, "capsule": rows[0]["name"]}
     log_brew(conn, None, fam, source)
@@ -368,9 +414,13 @@ def resolve_pending(conn, capsule_id: int, brew_id: int | None = None) -> dict:
     if capsule is None:
         raise ValueError("capsule not found")
     if brew_id is None:
+        # prefer a pending of the capsule's own family; a familyless pending (the Original Line
+        # reads no barcode) is still a fair answer, but another cup size's is not
         pend = conn.execute(
             "SELECT id FROM brews WHERE capsule_id IS NULL AND delta < 0"
-            " AND (line = ? OR line = '') ORDER BY id LIMIT 1", (capsule["line"],)
+            " AND (family IS NULL OR lower(family) = lower(?))"
+            " AND (line = ? OR line = '') ORDER BY (family IS NULL), id LIMIT 1",
+            (capsule["family"], capsule["line"]),
         ).fetchone()
         brew_id = pend["id"] if pend else None
     else:
@@ -384,8 +434,17 @@ def resolve_pending(conn, capsule_id: int, brew_id: int | None = None) -> dict:
             raise ValueError("pending brew belongs to the other capsule system")
     if brew_id is None:
         raise ValueError("no pending brew")
-    dec(conn, capsule_id)
-    conn.execute("UPDATE brews SET capsule_id = ? WHERE id = ?", (capsule_id, brew_id))
+    # claim the row in the statement that tests it: two taps must not both decrement
+    claimed = conn.execute(
+        "UPDATE brews SET capsule_id = ? WHERE id = ? AND capsule_id IS NULL AND delta < 0",
+        (capsule_id, brew_id),
+    ).rowcount
+    if not claimed:
+        raise ValueError("not a pending brew")
+    # the capsule may already be empty (the pending exists because stock ran out): store what
+    # its count actually changed by, so undoing the resolved brew cannot credit phantom stock
+    delta = dec(conn, capsule_id)
+    conn.execute("UPDATE brews SET delta = ? WHERE id = ?", (delta, brew_id))
     conn.commit()
     return {"action": "resolved", "capsule": capsule["family"]}
 
@@ -403,16 +462,24 @@ def undo_brew(conn, brew_id: int) -> dict:
     row = conn.execute("SELECT capsule_id, delta FROM brews WHERE id = ?", (brew_id,)).fetchone()
     if row is None:
         raise ValueError("brew not found")
+    if row["capsule_id"] is None and row["delta"] == 0:
+        raise ValueError("a maintenance event is not a brew; it cannot be undone")
+    # delete first, conditional on the values just read: a double tap must not reverse twice,
+    # and a reassign that committed meanwhile changes both columns, so this refuses it too
+    if not conn.execute("DELETE FROM brews WHERE id = ? AND capsule_id IS ? AND delta = ?",
+                        (brew_id, row["capsule_id"], row["delta"])).rowcount:
+        raise ValueError("brew changed meanwhile")
     if row["capsule_id"] is not None:
         dec(conn, row["capsule_id"], -row["delta"])
-    conn.execute("DELETE FROM brews WHERE id = ?", (brew_id,))
     conn.commit()
     return {"action": "undone"}
 
 
 def set_brew_capsule(conn, brew_id: int, capsule_id: int) -> dict:
-    """Reassign (or resolve) a brew to a different capsule, fixing the counts."""
-    row = conn.execute("SELECT capsule_id, delta, line FROM brews WHERE id = ?",
+    """Reassign (or resolve) a brew to a different capsule, fixing the counts. The stored
+    delta is the change actually applied to the capsule the brew now points at, so undoing it
+    never credits stock that was clamped away when the target was already empty."""
+    row = conn.execute("SELECT capsule_id, delta, source, line FROM brews WHERE id = ?",
                        (brew_id,)).fetchone()
     target = conn.execute("SELECT family, line FROM capsules WHERE id = ?",
                           (capsule_id,)).fetchone()
@@ -423,16 +490,26 @@ def set_brew_capsule(conn, brew_id: int, capsule_id: int) -> dict:
     # same boundary as resolve_pending: one brew cannot move to the other capsule system
     if row["line"] and row["line"] != target["line"]:
         raise ValueError("brew belongs to the other capsule system")
-    if row["delta"] >= 0:
+    # a restock and a maintenance event are not brews; a 0-delta brew stays moveable so a
+    # mis-attributed one can still be corrected
+    if row["delta"] > 0 or row["source"] in MAINTENANCE:
         raise ValueError("only brews can be reassigned")
+    # claim the row before moving stock: a second request (double tap) must not apply the
+    # same move again; the value read above is what this plan was based on
+    claimed = conn.execute(
+        "UPDATE brews SET capsule_id = ?, family = ? WHERE id = ? AND capsule_id IS ?",
+        (capsule_id, target["family"], brew_id, row["capsule_id"]),
+    ).rowcount
+    if not claimed:
+        raise ValueError("brew changed meanwhile")
+    delta = row["delta"]
     if row["capsule_id"] is not None and row["capsule_id"] != capsule_id:
-        dec(conn, row["capsule_id"], -row["delta"])
+        dec(conn, row["capsule_id"], -delta)  # give the unit back where it came from
     if row["capsule_id"] != capsule_id:
-        dec(conn, capsule_id, row["delta"])
-    conn.execute(
-        "UPDATE brews SET capsule_id = ?, family = ? WHERE id = ?",
-        (capsule_id, target["family"], brew_id),
-    )
+        # the target may be empty, in which case nothing leaves it; keep that applied delta
+        # so moving the brew back later cannot credit stock that was never consumed
+        delta = dec(conn, capsule_id, delta)
+        conn.execute("UPDATE brews SET delta = ? WHERE id = ?", (delta, brew_id))
     conn.commit()
     return {"action": "reassigned"}
 
@@ -566,7 +643,8 @@ def match_capsule(conn, name: str, line: str | None = None) -> dict | None:
 
 def _vision_content(req) -> str:
     with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.load(resp)["choices"][0]["message"].get("content", "")
+        content = json.load(resp)["choices"][0]["message"].get("content", "")
+    return content if isinstance(content, str) else ""
 
 
 def vision_pick(image_data_url: str, candidates: list[dict], line: str = DEFAULT_LINE,
@@ -602,6 +680,10 @@ def vision_pick(image_data_url: str, candidates: list[dict], line: str = DEFAULT
         content = (fetch or _vision_content)(req)
     except Exception as err:  # noqa: BLE001 - vision is best-effort
         return {"error": str(err)}
+    if not isinstance(content, str):
+        # an OpenAI-compatible backend may answer content:null (refusal, max_tokens) or a
+        # parts list; the colour shortlist must survive that instead of a 400
+        return {"error": "unparseable", "raw": ""}
     match = re.search(r"\{.*\}", content, re.S)
     if not match:
         return {"error": "unparseable", "raw": content[:200]}
@@ -639,7 +721,10 @@ def identify(conn, color: str, image_data_url: str | None = None, line: str | No
             if image_data_url.startswith("data:image/") else None
     vis = result["vision"]
     if vis and not vis.get("error"):
-        text = (vis.get("text") or "").strip()
+        # a small model can answer with a list or number where a string belongs: coerce, or
+        # the handler dies with AttributeError instead of saying "no match"
+        text = vis.get("text") if isinstance(vis.get("text"), str) else ""
+        text = text.strip()
         hits = capsule_names_in(conn, text, line=line) if text else []
         if hits:  # a name read off the pod outranks the colour shortlist
             vis["name"] = hits[0]["name"]
@@ -651,7 +736,7 @@ def identify(conn, color: str, image_data_url: str | None = None, line: str | No
                                                      if entry_line(c) == line])
             vis["name"] = cat[0]["name"] if cat else None
             vis["not_owned"] = bool(cat)
-        elif vis.get("name"):
+        elif isinstance(vis.get("name"), str):
             # No text at all: the model's colour opinion is worth less than the colour ranking
             # the browser already did, so report it without reordering the candidates.
             hit = match_capsule(conn, vis["name"], line)
@@ -661,9 +746,17 @@ def identify(conn, color: str, image_data_url: str | None = None, line: str | No
 
 
 def set_capsule_order(conn, ids: list[int]) -> None:
+    """Save the drag order for the machine's line. The stored list is shared by both lines,
+    so the other line's ids are kept in their existing order instead of being dropped."""
+    line = machine_line(conn)
+    keep_ids = {str(r["id"]) for r in conn.execute(
+        "SELECT id FROM capsules WHERE line != ?", (line,))}
+    new = [str(int(i)) for i in ids]
+    # other-line ids stay, in the order they already had; stale ids are dropped
+    keep = [x for x in get_setting(conn, "capsule_order").split(",") if x in keep_ids]
     conn.execute(
         "INSERT OR REPLACE INTO settings VALUES ('capsule_order', ?)",
-        (",".join(str(int(i)) for i in ids),),
+        (",".join(new + [x for x in keep if x not in set(new)]),),
     )
     conn.commit()
 
@@ -720,7 +813,7 @@ def interval_days(conn, task: str, default: int) -> int:
         n = int(row["value"])
     except (TypeError, ValueError):
         return default
-    return n if n > 0 else default
+    return min(n, 36500) if n > 0 else default  # a huge value would overflow timedelta()
 
 
 def maintenance_state(conn) -> list[dict]:
@@ -730,11 +823,16 @@ def maintenance_state(conn) -> list[dict]:
     for task, (label, default_days) in MAINTENANCE.items():
         days = interval_days(conn, task, default_days)
         row = conn.execute(
-            "SELECT ts FROM brews WHERE source = ? ORDER BY id DESC LIMIT 1", (task,)
+            "SELECT ts FROM brews WHERE source = ? AND capsule_id IS NULL AND delta = 0"
+            " ORDER BY id DESC LIMIT 1", (task,)
         ).fetchone()
         last = row["ts"] if row else None
         try:
-            nxt = datetime.fromisoformat(last) + timedelta(days=days) if last else None
+            nxt = datetime.fromisoformat(last) if last else None
+            if nxt and nxt.tzinfo is None:  # a foreign/hand-edited backup may omit the offset
+                nxt = nxt.replace(tzinfo=timezone.utc)
+            if nxt:
+                nxt += timedelta(days=days)
         except (TypeError, ValueError):  # a hand-edited backup must not brick /api/state
             last = nxt = None
         out.append({
@@ -750,6 +848,16 @@ def maintenance_state(conn) -> list[dict]:
 def get_setting(conn: sqlite3.Connection, key: str, default: str = "") -> str:
     row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return row["value"] if row else default
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A stored topic URL must not bounce the server to an arbitrary host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_ntfy_opener = urllib.request.build_opener(_NoRedirect())
 
 
 def ntfy_host_ok(url: str) -> None:
@@ -794,7 +902,7 @@ def ntfy_send(url: str, message: str, title: str = "Nespresso") -> str | None:
     if urlparse(url).scheme not in ("http", "https"):
         return "notify target must be http(s)"  # never let a stored URL read a local file
     try:
-        with urllib.request.urlopen(
+        with _ntfy_opener.open(
             urllib.request.Request(url, data=message.encode(), headers={"Title": title}),
             timeout=10,
         ):
@@ -813,6 +921,7 @@ def notify_check(conn: sqlite3.Connection, send=None) -> None:
     if not url:
         return  # unconfigured: don't record episodes either, so configuring it later
     send = send or ntfy_send    # immediately reports what is low / due right now
+    messages: list[tuple[str, str]] = []
     # Only the machine's own line can run low for its owner; the other line is not in use.
     line = machine_line(conn)
     low = {r["id"] for r in conn.execute(
@@ -822,9 +931,8 @@ def notify_check(conn: sqlite3.Connection, send=None) -> None:
     for cid in sorted(low - notified):
         r = conn.execute("SELECT name, count FROM capsules WHERE id = ?", (cid,)).fetchone()
         if r:  # a failed send still marks the episode done — a retry storm is worse
-            err = send(url, f"{r['name']}: only {r['count']} left", title="Nespresso - running low")
-            if err:
-                print(f"notify failed: {err}", file=sys.stderr)
+            messages.append((f"{r['name']}: only {r['count']} left",
+                             "Nespresso - running low"))
     conn.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)",
                  (f"notified_low_{line}", ",".join(str(i) for i in sorted(low)),))
     # A brew the detector could not pin to a capsule waits in the dashboard for a pick. Only
@@ -848,23 +956,25 @@ def notify_check(conn: sqlite3.Connection, send=None) -> None:
             continue  # already said, or no capsule to pick — a restock will make it one later
         announced.add(p["id"])
         what = f"{p['family']} brew" if p["family"] else "brew"
-        err = send(url, f"{what} from {p['source']} needs a capsule - open the dashboard to pick it",
-                   title="Nespresso - which capsule?")
-        if err:
-            print(f"notify failed: {err}", file=sys.stderr)
+        messages.append((f"{what} from {p['source']} needs a capsule - open the dashboard to pick it",
+                         "Nespresso - which capsule?"))
     conn.execute("INSERT OR REPLACE INTO settings VALUES ('notified_pending', ?)",
                  (",".join(str(i) for i in sorted(announced & still_pending)),))
     due = [m for m in maintenance_state(conn) if m["due"]]
     notified_m = {x for x in get_setting(conn, "notified_maint").split(",") if x}
     for m in due:
         if m["task"] not in notified_m:
-            err = send(url, f"{m['label']} is due (every {m['every_days']} days)",
-                       title="Nespresso - upkeep due")
-            if err:
-                print(f"notify failed: {err}", file=sys.stderr)
+            messages.append((f"{m['label']} is due (every {m['every_days']} days)",
+                             "Nespresso - upkeep due"))
     conn.execute("INSERT OR REPLACE INTO settings VALUES ('notified_maint', ?)",
                  (",".join(sorted(m["task"] for m in due)),))
+    # Commit before sending: a stalled ntfy host must not hold the write lock a concurrent
+    # brew (the machine integration) waits for.
     conn.commit()
+    for message, title in messages:
+        err = send(url, message, title=title)
+        if err:
+            print(f"notify failed: {err}", file=sys.stderr)
 
 
 def _capsule_key(c: dict) -> str:
@@ -981,6 +1091,10 @@ def import_data(conn: sqlite3.Connection, data: dict) -> dict:
         # An imported backup is an existing install — never ask it to run the first-run wizard.
         if not conn.execute("SELECT 1 FROM settings WHERE key='setup_done'").fetchone():
             conn.execute("INSERT INTO settings VALUES ('setup_done', '1')")
+        repair_nonfinite(conn)  # a row value can be a string SQLite turns into inf
+        # an older backup carries no skus: stamp them (and the renames), but never commit here —
+        # the restore's rollback must still undo everything on a later failure
+        backfill_skus(conn, commit=False)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1050,7 +1164,10 @@ def refresh_scanner() -> list[dict]:
         return []
     try:
         with urllib.request.urlopen(SCANNER_URL, timeout=10) as resp:
-            good = sanitise_entries(json.loads(resp.read()))
+            # capped: a hostile or broken catalogue host must not be able to grow this process
+            good = sanitise_entries(json.loads(resp.read(2 * 1024 * 1024),
+                                               parse_constant=_reject_constant,
+                                               parse_float=_finite_float))
         if good:  # a malformed or empty payload keeps the last good pull
             with _scanner_lock:
                 _scanner_entries[:] = good
@@ -1093,9 +1210,10 @@ def merge_catalogue(local: list[dict], remote: list[dict]) -> tuple[list[dict], 
         if not name and not sku:
             continue
         line = valid_line(e.get("line"))
-        if sku in seen or (line, name) in local_names or (sku and sku in local_skus):
+        if (sku and sku in seen) or (line, name) in local_names or (sku and sku in local_skus) \
+                or (name and f"{line}:{name}" in seen):
             continue  # already known locally, or a duplicate inside the remote list
-        seen.add(sku or "name:" + name)
+        seen.update(x for x in (sku, f"{line}:{name}" if name else "") if x)
         new.append({**e, "sku": sku, "line": line, "family": normalize_family(e.get("family"), line)})
     return [*local, *new], new
 
@@ -1170,9 +1288,9 @@ def current_state(conn) -> dict:
             continue
         try:
             p = float(e.get("price"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):  # a huge int in the catalogue
             continue
-        if p > 0:
+        if p > 0 and math.isfinite(p):
             store_prices[sku] = p
     for c in capsules:
         try:
@@ -1213,6 +1331,19 @@ def current_state(conn) -> dict:
 
 # --------------------------------------------------------------------------- http
 
+def forwarded_host(header: str | None, peer: str) -> str:
+    """The X-Forwarded-Host a proxy overwrote, or "" when the request did not come from a
+    declared proxy. The header itself is not a secret — only the peer address separates the
+    proxy's value from a client forgery — and the last hop is the one a proxy appends."""
+    try:
+        addr = ipaddress.ip_address(peer)
+    except ValueError:
+        return ""
+    if not any(addr in net for net in TRUSTED_PROXIES):
+        return ""
+    return (header or "").split(",")[-1].strip()
+
+
 def origin_allowed(origin: str | None, host: str | None, forwarded_host: str | None = "") -> bool:
     """A browser always sends Origin on a mutating request, so a cross-site one is refused
     here — otherwise any page the owner visits could POST /api/import and wipe the db.
@@ -1231,7 +1362,8 @@ def host_allowed(host: str | None, forwarded: str | None = "") -> bool:
     Accepted are hosts browsed by IP address (direct LAN use, the container healthcheck),
     localhost, and the configured PUBLIC_HOST (a *named* deployment behind a proxy — set
     it for the public hostname, a .local/mDNS name, or any other alias).
-    X-Forwarded-Host is honoured like origin_allowed does for a Host-rewriting proxy."""
+    X-Forwarded-Host covers a Host-rewriting proxy, but forwarded_host() only lets a
+    declared proxy (TRUST_PROXY) set it."""
     real = ((forwarded or "").split(",")[0].strip() or (host or "").strip())
     hostname = real.lower()
     if hostname.startswith("["):  # [::1]:8787
@@ -1248,6 +1380,21 @@ def host_allowed(host: str | None, forwarded: str | None = "") -> bool:
     except ValueError:
         return False  # some *name*: only PUBLIC_HOST is known-safe, the rest could rebind
     return True
+
+
+def _reject_constant(value: str):
+    """json.loads accepts Infinity/NaN; they are not JSON, and json.dumps would emit them as
+    bare tokens no browser can parse — one stored Infinity freezes /api/state for good."""
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
+def _finite_float(value: str) -> float:
+    """parse_float hook: json.loads turns 1e400 into inf without complaint, so the literal
+    token guard alone still lets a backup poison the db."""
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"number out of range: {value}")
+    return number
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1290,6 +1437,10 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _body(self) -> dict:
+        if self.headers.get("Transfer-Encoding"):
+            # chunked bodies are not read: treating them as {} made /api/settings answer ok
+            self._send(400, {"error": "chunked bodies are not supported"})
+            raise ConnectionError("chunked body")
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
@@ -1301,19 +1452,18 @@ class Handler(BaseHTTPRequestHandler):
         if length > 10 * 1024 * 1024:  # photos come in at ~1024px; anything bigger is abuse
             self._send(413, {"error": "body too large"})
             raise ConnectionError("body too large")
-        data = json.loads(self.rfile.read(length) or b"{}")
+        data = json.loads(self.rfile.read(length) or b"{}", parse_constant=_reject_constant,
+                          parse_float=_finite_float)
         return data if isinstance(data, dict) else {}  # a non-dict body is just a bad payload
 
     def _conn(self) -> sqlite3.Connection:
         return connect()
 
     def _forwarded_host(self) -> str:
-        """X-Forwarded-Host is whatever the client sent, so it is only used when a proxy is
-        declared (TRUST_PROXY) *and* overwrites it. Trusting it blindly handed a DNS-rebinding
-        page the whole API; the last hop is the one a proxy appends."""
-        if not TRUST_PROXY:
-            return ""
-        return (self.headers.get("X-Forwarded-Host") or "").split(",")[-1].strip()
+        """X-Forwarded-Host is whatever the client sent, so it counts only when the request
+        comes from a declared proxy address (TRUST_PROXY). Trusting it from any peer handed a
+        DNS-rebinding page the whole API."""
+        return forwarded_host(self.headers.get("X-Forwarded-Host"), self.client_address[0])
 
     def _host_ok(self) -> bool:
         if host_allowed(self.headers.get("Host"), self._forwarded_host()):
@@ -1389,13 +1539,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urlparse(self.path)
-        if url.path.startswith("/api") and not self._api_gatekeeper():
+        if not url.path.startswith("/api"):
+            self._send(404, {"error": "not found"})  # never read a body no route will use
+            return
+        if not self._api_gatekeeper():
             return
         if not self._same_origin():
             return
         try:
             payload = self._body()
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):  # bad JSON, bad UTF-8, Infinity, deep nesting
             self._send(400, {"error": "invalid json"})
             return
         except ConnectionError:
@@ -1407,15 +1560,19 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == "/api/brew":
                 self._brew(conn, payload)
             elif url.path == "/api/brew-detected":
+                capsule = payload.get("capsule")
                 result = brew_detected(conn, payload.get("family"), payload.get("source", "auto"),
-                                       payload.get("capsule"))
+                                       capsule if isinstance(capsule, str) else None)
                 self._send(200, result)
             elif url.path == "/api/resolve":
                 self._send(200, resolve_pending(
                     conn, int(payload["capsule_id"]), payload.get("brew_id")
                 ))
             elif url.path == "/api/identify":
-                self._send(200, identify(conn, payload.get("color", ""), payload.get("image")))
+                image = payload.get("image")
+                color = payload.get("color")
+                self._send(200, identify(conn, color if isinstance(color, str) else "",
+                                         image if isinstance(image, str) else None))
             elif url.path == "/api/dismiss":
                 self._send(200, dismiss_pending(conn, int(payload["brew_id"])))
             elif url.path == "/api/brews":
@@ -1433,40 +1590,62 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, import_data(conn, payload))
             elif url.path == "/api/notify-test":
                 stored = get_setting(conn, "ntfy_url")
-                target = payload.get("url") or stored
+                wanted = payload.get("url")
+                target = (wanted if isinstance(wanted, str) else "") or stored
                 if not target:
                     raise ValueError("no ntfy topic URL configured")
                 if target != stored:
                     ntfy_host_ok(target)  # a client-chosen target is restricted
                 err = ntfy_send(target, "Test notification — your Nespresso dashboard is wired up.",
                                 title="Nespresso - test")
-                self._send(200, {"ok": err is None, "error": err})
+                if err:  # the detail stays server-side: it names hosts/ports a probe could map
+                    print(f"notify test failed: {err}", file=sys.stderr)
+                self._send(200, {"ok": err is None})
             elif url.path == "/api/settings":
+                if not any(k in payload for k in ("machine_name", "machine_model", "machine_image",
+                                                  "machine_line", "sleeve_size", "clean_days",
+                                                  "descale_days", "ntfy_url")):
+                    raise ValueError("no settings in payload")  # an empty body must not answer ok
+                # validate before writing anything: a rejected field must not leave a half-applied
+                # change (and an open transaction) behind
+                if "machine_line" in payload and payload["machine_line"] not in FAMILIES:
+                    raise ValueError("unknown capsule system")
+                for key in ("clean_days", "descale_days"):
+                    if key in payload and not (str(payload[key]).isdigit()
+                                               and int(payload[key]) > 0):
+                        raise ValueError(f"{key} must be a positive whole number of days")
                 if payload.get("ntfy_url"):  # empty clears the topic; anything else is checked
                     payload["ntfy_url"] = ntfy_url_ok(str(payload["ntfy_url"]))
                 for key in ("machine_name", "machine_model", "machine_image", "sleeve_size",
                             "clean_days", "descale_days", "ntfy_url"):
                     if key in payload:
                         conn.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, payload[key]))
-                if "machine_line" in payload:  # an unknown line would empty the dashboard
+                if "machine_line" in payload:
                     conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', ?)",
                                  (valid_line(payload["machine_line"]),))
                 conn.commit()
                 self._send(200, {"ok": True})
             else:
                 self._send(404, {"error": "not found"})
+                return
             if url.path not in ("/api/identify", "/api/notify-test"):
                 notify_async()  # a state change may have crossed a reminder threshold
-        except (ValueError, KeyError, TypeError, sqlite3.Error) as err:  # TypeError: wrong payload types
+        except (ValueError, KeyError, TypeError, OverflowError, sqlite3.Error) as err:  # bad payload types
+            # never leave a half-applied request holding the write lock other requests wait for
+            conn.rollback()
             self._send(400, {"error": str(err)})
 
     def _upsert_capsule(self, conn, payload):
         fields = {k: payload.get(k, "") for k in ("name", "family", "color", "image", "notes")}
-        fields["sku"] = (payload.get("sku") or "").strip()
+        fields["sku"] = str(payload.get("sku") or "").strip()
         if not fields["name"] or not fields["family"]:
             raise ValueError("name and family are required")
         count = max(0, int(payload.get("count", 0) or 0))
         price = max(0.0, float(payload.get("price") or 0))
+        # "Infinity"/"inf" as a string reaches float() too, and a finite value above the
+        # restore threshold would be silently zeroed by the next start
+        if not math.isfinite(price) or price > 1e12:
+            raise ValueError("price must be a finite number")
         # `or 2` would swallow an explicit 0 ("never warn"), so test for None instead
         threshold = payload.get("threshold")
         threshold = max(0, int(threshold)) if threshold is not None else 2
@@ -1499,7 +1678,7 @@ class Handler(BaseHTTPRequestHandler):
         row = conn.execute("SELECT name, family FROM capsules WHERE id=?", (capsule_id,)).fetchone()
         if row is None:
             raise ValueError("capsule not found")
-        dec(conn, capsule_id, delta)
+        delta = dec(conn, capsule_id, delta)  # what the count actually changed by (clamped at 0)
         if payload.get("log"):
             log_brew(conn, capsule_id, row["family"], payload.get("source", "manual"), delta=delta)
         conn.commit()
@@ -1507,7 +1686,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         url = urlparse(self.path)
-        if url.path.startswith("/api") and not self._api_gatekeeper():
+        if not url.path.startswith("/api"):
+            self._send(404, {"error": "not found"})
+            return
+        if not self._api_gatekeeper():
             return
         if not self._same_origin():
             return
@@ -1516,25 +1698,29 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "id required"})
             return
         conn = self._conn()
-        if url.path == "/api/capsules":
-            try:
-                result = delete_capsule(conn, int(id_))
-            except ValueError as err:
-                self._send(409, {"error": str(err)})
+        try:
+            if url.path == "/api/capsules":
+                try:
+                    result = delete_capsule(conn, int(id_))
+                except ValueError as err:
+                    self._send(409, {"error": str(err)})
+                    return
+                notify_async()  # deleting can end a low-stock episode
+                self._send(200, result)
                 return
-            notify_async()  # deleting can end a low-stock episode
-            self._send(200, result)
-            return
-        if url.path == "/api/brews":
-            try:
-                result = undo_brew(conn, int(id_))
-            except ValueError as err:
-                self._send(404, {"error": str(err)})
+            if url.path == "/api/brews":
+                try:
+                    result = undo_brew(conn, int(id_))
+                except ValueError as err:
+                    self._send(409, {"error": str(err)})
+                    return
+                notify_async()  # undo can end or start a low-stock episode
+                self._send(200, result)
                 return
-            notify_async()  # undo can end or start a low-stock episode
-            self._send(200, result)
-            return
-        self._send(404, {"error": "not found"})
+            self._send(404, {"error": "not found"})
+        except sqlite3.Error as err:  # e.g. 'database is locked' after busy_timeout
+            conn.rollback()
+            self._send(503, {"error": str(err)})
 
 
 def selftest() -> None:
@@ -1641,6 +1827,11 @@ def selftest() -> None:
         assert r["vision"]["name"] == own_name, r["vision"]
         r = canned("no json at all")
         assert r["vision"]["error"] == "unparseable", r["vision"]
+        # a backend answering content:null, or non-string text/name fields, must not raise
+        r = canned(None)
+        assert r["vision"]["error"] == "unparseable", r["vision"]
+        r = canned(json.dumps({"text": ["a"], "name": 7}))
+        assert "error" not in r["vision"], r["vision"]
         missing = next((c["name"] for c in known_catalogue()
                         if entry_line(c) == "vertuo" and c["name"] and not conn.execute(
                             "SELECT 1 FROM capsules WHERE line='vertuo' AND name=?",
@@ -1817,23 +2008,43 @@ def selftest() -> None:
         # the handler refuses the rebinding request even though Origin matches its own Host
         h4 = Handler.__new__(Handler)
         h4.headers = {"Host": "attacker.com:8787", "Origin": "http://attacker.com:8787"}
+        h4.client_address = ("192.168.70.9", 5000)
         gate_codes = []
         h4._send = lambda code, *a, **k: gate_codes.append(code)
         assert h4._api_gatekeeper() is False and gate_codes == [403], gate_codes
 
-        # X-Forwarded-Host is client-controlled: honouring it by default let a rebinding page
-        # launder its name past the allowlist, and a pass-through proxy forwards the forgery.
-        # The last hop is the proxy's own value (TRUST_PROXY, off unless declared).
+        # X-Forwarded-Host is client-controlled: honouring it from any peer let a rebinding
+        # page launder its name past the allowlist. Only a request *from* a declared proxy
+        # address may speak for one, and the last hop is the value that proxy appended.
         h4.headers = {"Host": "attacker.com:8787", "Origin": "http://attacker.com:8787",
                       "X-Forwarded-Host": "127.0.0.1"}
+        h4.client_address = ("192.168.70.9", 5000)  # not the proxy: the header is a forgery
         gate_codes.clear()
         assert h4._api_gatekeeper() is False and gate_codes == [403], gate_codes
-        g["TRUST_PROXY"] = True  # a declared proxy that overwrites the header still works
-        g["PUBLIC_HOST"] = "ncs.khmls.net"
+        g["TRUSTED_PROXIES"] = [ipaddress.ip_network("192.168.70.10/32")]
+        h4.client_address = ("192.168.70.10", 5000)  # the declared proxy itself
         h4.headers = {"Host": "backend", "X-Forwarded-Host": "ncs.khmls.net"}
+        g["PUBLIC_HOST"] = "ncs.khmls.net"
         gate_codes.clear()
         assert h4._api_gatekeeper() is True and gate_codes == [], gate_codes
-        g["TRUST_PROXY"] = False
+        # the peer check, not just a non-empty list, is what makes the header trusted
+        h4.client_address = ("192.168.70.9", 5000)
+        h4.headers = {"Host": "attacker.com:8787", "X-Forwarded-Host": "127.0.0.1"}
+        gate_codes.clear()
+        assert h4._api_gatekeeper() is False and gate_codes == [403], gate_codes
+        assert forwarded_host("a:1, ncs.khmls.net", "192.168.70.10") == "ncs.khmls.net"
+        assert forwarded_host("ncs.khmls.net", "not-an-ip") == ""
+        # trust covers the header only, not a Host the proxy itself would have refused
+        h4.headers = {"Host": "backend", "X-Forwarded-Host": "evil.example"}
+        gate_codes.clear()
+        assert h4._api_gatekeeper() is False and gate_codes == [403], gate_codes
+        # an operator value that names no address fails closed instead of trusting everyone
+        assert _proxy_nets("true") == [] and _proxy_nets("192.168.70.10, 10.0.0.0/8") == [
+            ipaddress.ip_network("192.168.70.10/32"), ipaddress.ip_network("10.0.0.0/8")]
+        g["TRUSTED_PROXIES"] = []
+        h4.headers = {"Host": "backend", "X-Forwarded-Host": "ncs.khmls.net"}
+        gate_codes.clear()
+        assert h4._api_gatekeeper() is False and gate_codes == [403], gate_codes
         g["PUBLIC_HOST"] = ""
 
         # AUTH_TOKEN: unset = open (the default), set = Bearer header required on /api/*
@@ -2258,7 +2469,7 @@ def selftest() -> None:
 
         # ... and so does an empty or malformed pull (no stub would silently wipe the banner)
         class _FakeResp:
-            def read(self): return b'{"capsules": []}'
+            def read(self, size=-1): return b'{"capsules": []}'
             def __enter__(self): return self
             def __exit__(self, *exc): return False
         real_urlopen = urllib.request.urlopen
@@ -2357,6 +2568,244 @@ def selftest() -> None:
         assert "Colombia" in [k["name"] for k in current_state(conn)["known"]], \
             "a same-name capsule of the other line is not owned"
         conn.execute("INSERT OR REPLACE INTO settings VALUES ('machine_line', 'vertuo')")
+
+        # stock integrity: dec() reports what it applied, so a brew logged against an empty
+        # capsule logs delta 0 and undoing it cannot credit stock that was never consumed
+        conn.execute("INSERT INTO capsules (name, sku, family, color, line, count)"
+                     " VALUES ('Empty A', '', 'Mug', '#000000', 'vertuo', 0)")
+        empty_a = conn.execute("SELECT id FROM capsules WHERE name='Empty A'").fetchone()[0]
+        applied = dec(conn, empty_a, -1)
+        assert applied == 0, applied
+        bid = log_brew(conn, empty_a, "Mug", "manual", delta=applied)
+        conn.commit()
+        undo_brew(conn, bid)
+        assert conn.execute("SELECT count FROM capsules WHERE id=?", (empty_a,)).fetchone()[0] == 0
+
+        # a pending brew resolved to an empty capsule stores the applied 0 as well
+        pend = log_brew(conn, None, "Mug", "manual", line="vertuo")
+        resolve_pending(conn, empty_a, pend)
+        undo_brew(conn, pend)
+        assert conn.execute("SELECT count FROM capsules WHERE id=?", (empty_a,)).fetchone()[0] == 0
+
+        # moving a brew onto an empty capsule and back must not credit it with stock
+        conn.execute("INSERT INTO capsules (name, sku, family, color, line, count)"
+                     " VALUES ('Empty B', '', 'Mug', '#000000', 'vertuo', 0)")
+        empty_b = conn.execute("SELECT id FROM capsules WHERE name='Empty B'").fetchone()[0]
+        conn.execute("UPDATE capsules SET count = 2 WHERE id = ?", (empty_a,))
+        conn.commit()
+        bid = log_brew(conn, empty_a, "Mug", "manual", delta=dec(conn, empty_a, -1))
+        conn.commit()
+        set_brew_capsule(conn, bid, empty_b)  # nothing can leave B, so the brew turns neutral
+        set_brew_capsule(conn, bid, empty_a)  # and moving back must not invent a unit
+        assert conn.execute("SELECT count FROM capsules WHERE id=?", (empty_b,)).fetchone()[0] == 0
+        assert conn.execute("SELECT count FROM capsules WHERE id=?", (empty_a,)).fetchone()[0] == 2
+
+        # a non-finite price cannot be ingested, and one already stored is repaired on start
+        for bad in ('{"price": Infinity}', '{"price": NaN}'):
+            try:
+                json.loads(bad, parse_constant=_reject_constant)
+                raise AssertionError(f"expected ValueError for {bad}")
+            except ValueError:
+                pass
+        h6 = Handler.__new__(Handler)
+        h6._send = lambda *a, **k: None
+        try:
+            h6._upsert_capsule(conn, {"name": "Inf", "family": "Mug", "price": "inf"})
+            raise AssertionError("expected ValueError for a string inf price")
+        except ValueError:
+            pass
+        conn.execute("UPDATE capsules SET price = 9e999 WHERE name = 'Fortado'")
+        conn.commit()
+        migrate(conn)
+        assert conn.execute("SELECT price FROM capsules WHERE name='Fortado'").fetchone()[0] == 0
+        assert "Infinity" not in json.dumps(current_state(conn))
+
+        # 1e400 parses to inf without a token, so the parse_float hook must reject it before
+        # /api/import can store a value migrate() then has to repair (or misses)
+        for bad in ('{"price": 1e400}', '{"price": -1e400}'):
+            try:
+                json.loads(bad, parse_float=_finite_float)
+                raise AssertionError(f"expected ValueError for {bad}")
+            except ValueError:
+                pass
+        conn.execute("UPDATE capsules SET count = 9e999, price = -9e999 WHERE name = 'Fortado'")
+        conn.execute("UPDATE brews SET delta = 9e999 WHERE id = (SELECT MAX(id) FROM brews)")
+        conn.commit()
+        migrate(conn)
+        assert "Infinity" not in json.dumps(current_state(conn))
+
+        # a zone-less timestamp from a hand-edited/foreign backup must not take /api/state down
+        conn.execute("INSERT INTO brews (capsule_id, family, ts, source, delta, line)"
+                     " VALUES (NULL, 'Cleaning', '2000-01-01T00:00:00', 'clean', 0, 'vertuo')")
+        conn.commit()
+        assert any(m["task"] == "clean" and m["due"] for m in maintenance_state(conn))
+
+        # a restore writes row values straight into SQLite, whose numeric affinity turns the
+        # string "9e999" into REAL inf behind the JSON hooks' back — the import must repair too,
+        # and a huge interval must not make timedelta() raise inside maintenance_state (the db is
+        # replaced, so this runs last)
+        import_data(conn, {"format": "nespresso-stats-backup",
+                           "capsules": [{"name": "Sneaky", "family": "Mug", "line": "vertuo",
+                                         "price": "9e999", "count": "9e999"}],
+                           "brews": [],
+                           "settings": [{"key": "machine_line", "value": "vertuo"},
+                                        {"key": "clean_days", "value": "9" * 28}]})
+        assert "Infinity" not in json.dumps(current_state(conn))
+        assert interval_days(conn, "clean", 10) == 36500
+        assert maintenance_state(conn)  # a huge interval must not raise OverflowError
+
+        # ---- P2 hardening: a fresh db so the asserts above stay untouched
+        c2 = connect(Path(tmp) / "p2.db")
+        init_db(c2, CATALOG)
+        # two stocked capsules of different cup sizes (a fresh seed ships every count at 0)
+        cap = c2.execute("SELECT id, family FROM capsules WHERE line='vertuo' AND family='Mug'"
+                         " ORDER BY name LIMIT 1").fetchone()
+        other = c2.execute("SELECT id, family FROM capsules WHERE line='vertuo'"
+                           " AND family NOT IN ('Mug', '') ORDER BY name LIMIT 1").fetchone()
+        c2.execute("UPDATE capsules SET count = 5 WHERE id IN (?, ?)", (cap["id"], other["id"]))
+        c2.commit()
+
+        # a maintenance event is not a brew: it cannot be undone (dismiss already refused)
+        log_maintenance(c2, "clean")
+        mrow = c2.execute("SELECT id FROM brews WHERE source='clean'").fetchone()[0]
+        try:
+            undo_brew(c2, mrow)
+            raise AssertionError("a maintenance event must not be undoable")
+        except ValueError:
+            pass
+        assert c2.execute("SELECT 1 FROM brews WHERE id=?", (mrow,)).fetchone()
+
+        # a brew that merely carries source 'clean' is not upkeep; only a capsule-less delta-0
+        # event counts, or any caller could reset the reminder by logging a brew
+        c2.execute("DELETE FROM brews WHERE source='clean'")
+        log_brew(c2, cap["id"], cap["family"], "clean", delta=-1)
+        c2.commit()
+        assert "clean" in [m["task"] for m in maintenance_state(c2) if m["due"]]
+
+        # resolving without a brew_id prefers the capsule's own family, but still accepts a
+        # familyless pending (the Original Line reads no cup size)
+        pend_mug = log_brew(c2, None, cap["family"], "manual")
+        pend_other = log_brew(c2, None, other["family"], "manual")
+        c2.commit()
+        resolve_pending(c2, other["id"])
+        assert c2.execute("SELECT capsule_id FROM brews WHERE id=?",
+                          (pend_other,)).fetchone()[0] == other["id"]
+        assert c2.execute("SELECT capsule_id FROM brews WHERE id=?",
+                          (pend_mug,)).fetchone()[0] is None
+
+        # dragging on one line keeps the other line's saved order
+        v = [r[0] for r in c2.execute("SELECT id FROM capsules WHERE line='vertuo' ORDER BY id")]
+        o = [r[0] for r in c2.execute("SELECT id FROM capsules WHERE line='original' ORDER BY id")]
+        set_capsule_order(c2, [o[0], o[1]])     # the user orders the Original line first
+        set_capsule_order(c2, [v[1], v[0]])     # then drags on Vertuo (only those ids are sent)
+        order = get_setting(c2, "capsule_order").split(",")
+        assert order[:2] == [str(v[1]), str(v[0])], order
+        assert {str(o[0]), str(o[1])} <= set(order), order
+
+        # one capsule listed under two skus must not reach the picker twice
+        _, remote_new = merge_catalogue([], [
+            {"name": "Same", "sku": "s1", "line": "vertuo", "family": "Mug"},
+            {"name": "Same", "sku": "s2", "line": "vertuo", "family": "Mug"}])
+        assert len(remote_new) == 1, remote_new
+
+        # episodes are committed before the push: a stalled ntfy host must not hold the write
+        # lock a concurrent brew waits for (a second connection can read them inside send())
+        c2.execute("INSERT OR REPLACE INTO settings VALUES ('ntfy_url', 'https://ntfy.sh/t')")
+        c2.execute("DELETE FROM settings WHERE key LIKE 'notified_%'")
+        c2.execute("UPDATE capsules SET count = 1, threshold = 2 WHERE id = ?", (cap["id"],))
+        c2.commit()
+        visible = []
+
+        def spy(url, msg, title=""):
+            other_conn = connect(Path(tmp) / "p2.db")
+            visible.append(bool(other_conn.execute(
+                "SELECT 1 FROM settings WHERE key LIKE 'notified_%'").fetchone()))
+            other_conn.close()
+            return None
+
+        notify_check(c2, send=spy)
+        assert visible and all(visible), visible
+
+        # the rename is line-scoped: a Vertuo 'Colombia' must not block the Original row
+        c3 = connect(Path(tmp) / "p3.db")
+        init_db(c3, CATALOG)
+        c3.execute("DELETE FROM capsules")
+        c3.execute("INSERT INTO capsules (name, sku, family, color, line, count)"
+                   " VALUES ('Colombia', '', 'Mug', '#000000', 'vertuo', 1)")
+        c3.execute("INSERT INTO capsules (name, sku, family, color, line, count)"
+                   " VALUES ('Master Origins Colombia', '', 'Espresso', '#000000', 'original', 1)")
+        backfill_skus(c3)
+        renamed = c3.execute("SELECT name, sku FROM capsules WHERE line='original'").fetchone()
+        assert renamed["name"] == "Colombia" and renamed["sku"] == "7929.20", dict(renamed)
+
+        # a failed restore must roll back completely: the sku backfill runs inside its
+        # transaction, so it must not commit on its own
+        c4 = connect(Path(tmp) / "p4.db")
+        init_db(c4, CATALOG)
+        before = c4.execute("SELECT COUNT(*) FROM capsules").fetchone()[0]
+        try:
+            import_data(c4, {"format": "nespresso-stats-backup",
+                             "capsules": [{"name": "Only", "family": "Mug", "line": "vertuo",
+                                           "sku": "", "count": 1}],
+                             "brews": [],
+                             "settings": [{"key": "bad", "value": None}]})
+            raise AssertionError("expected the restore to fail")
+        except sqlite3.IntegrityError:
+            pass
+        assert c4.execute("SELECT COUNT(*) FROM capsules").fetchone()[0] == before
+
+        # a crafted backup can put junk into a numeric column: repair it, so undo cannot raise
+        weird = c4.execute(
+            "INSERT INTO brews (capsule_id, family, ts, source, delta, line) VALUES"
+            " ((SELECT id FROM capsules LIMIT 1), 'Mug', '2025-01-01T00:00:00+00:00',"
+            " 'manual', 'abc', 'vertuo')").lastrowid
+        c4.commit()
+        assert c4.execute("SELECT typeof(delta) FROM brews WHERE id=?", (weird,)).fetchone()[0] == "text"
+        repair_nonfinite(c4)
+        assert c4.execute("SELECT delta FROM brews WHERE id=?", (weird,)).fetchone()[0] == 0
+        undo_brew(c4, weird)  # the repaired row is undoable instead of dropping the request
+
+        # a non-string sku is coerced, not an AttributeError out of the handler
+        h9 = Handler.__new__(Handler)
+        h9._send = lambda *a, **k: None
+        h9._upsert_capsule(c4, {"name": "SkuNum", "family": "Mug", "sku": 5})
+        assert c4.execute("SELECT sku FROM capsules WHERE name='SkuNum'").fetchone()[0] == "5"
+
+        # the only filesystem route and the request-size/transfer guards
+        h7 = Handler.__new__(Handler)
+        codes = []
+        h7._send = lambda code, *a, **k: codes.append(code)
+        h7._serve_static("/static/../server.py")
+        assert codes == [403], codes
+        h7._serve_static("/static/capsules/melozio.png")
+        assert codes[-1] == 200, codes
+        h7.rfile = type("R", (), {"read": lambda self, n: b""})()
+        h7.headers = {"Content-Length": str(10 * 1024 * 1024 + 1)}
+        try:
+            h7._body()
+            raise AssertionError("expected ConnectionError for an oversized body")
+        except ConnectionError:
+            pass
+        assert codes[-1] == 413, codes
+        h7.headers = {"Transfer-Encoding": "chunked"}
+        try:
+            h7._body()
+            raise AssertionError("expected ConnectionError for a chunked body")
+        except ConnectionError:
+            pass
+        assert codes[-1] == 400, codes
+        # a redirecting topic URL must not bounce the server to another host
+        assert _NoRedirect().redirect_request(None, None, 302, "", {}, "http://x/") is None
+
+    # A palette lives in three places: the CSS block, the picker option and a theme.* string.
+    # A half-added one renders an unstyled dashboard, so the three must agree.
+    html = INDEX.read_text()
+    palettes = set(re.findall(r'html\[data-theme="([\w-]+)"\]', html))
+    options = set(re.findall(r'<option value="([\w-]+)" data-i18n="theme\.', html)) - {"auto"}
+    assert options == palettes and palettes, (sorted(options), sorted(palettes))
+    for path in sorted((ROOT / "static" / "i18n").glob("*.json")):
+        strings = json.loads(path.read_text())["strings"]
+        assert {f"theme.{p}" for p in palettes} <= set(strings), path.name
     print("selftest ok")
 
 

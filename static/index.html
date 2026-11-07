@@ -10,6 +10,8 @@
 <link rel="manifest" href="/static/manifest.webmanifest">
 <meta name="theme-color" content="#14100d">
 <style>
+  /* One flat block per palette. Every block sets the same 12 vars + color-scheme;
+     applyTheme() resolves "auto" to one of them, so nothing else depends on the count. */
   :root, html[data-theme="dark"] {
     --bg: #14100d; --panel: #1f1813; --panel-2: #291f18; --line: #3a2c22;
     --text: #f3e9dd; --muted: #a89383; --accent: #d9a441; --danger: #c0553f; --ok: #7aa05a;
@@ -18,9 +20,33 @@
   }
   html[data-theme="light"] {
     --bg: #f4efe7; --panel: #ffffff; --panel-2: #ece4d7; --line: #dcd2c3;
-    --text: #2b211a; --muted: #85705c; --accent: #a9741d; --danger: #b3402b; --ok: #4d7c2f;
+    --text: #2b211a; --muted: #7a6551; --accent: #a9741d; --danger: #b3402b; --ok: #4d7c2f;
     --glow: #ffffff; --on-accent: #231505; --info: #22789a;
     color-scheme: light;
+  }
+  html[data-theme="midnight"] {
+    --bg: #0c1015; --panel: #141a22; --panel-2: #1b2430; --line: #2a3644;
+    --text: #e6eef7; --muted: #8d9cad; --accent: #4aa8d8; --danger: #d1655a; --ok: #5fa86f;
+    --glow: #16202b; --on-accent: #05121b; --info: #7fd0e8;
+    color-scheme: dark;
+  }
+  html[data-theme="forest"] {
+    --bg: #0e1411; --panel: #16201a; --panel-2: #1e2b22; --line: #2c3d31;
+    --text: #e8f0e6; --muted: #94a894; --accent: #7fae55; --danger: #c96a4a; --ok: #8fbf6a;
+    --glow: #18241c; --on-accent: #0d1a06; --info: #63b9a3;
+    color-scheme: dark;
+  }
+  html[data-theme="blush"] {
+    --bg: #fdf3f0; --panel: #ffffff; --panel-2: #f8e4de; --line: #eed3ca;
+    --text: #3a2622; --muted: #8a6a62; --accent: #b4553f; --danger: #b02f28; --ok: #4f7c3a;
+    --glow: #ffffff; --on-accent: #fff5f1; --info: #2b7f97;
+    color-scheme: light;
+  }
+  html[data-theme="contrast"] {
+    --bg: #000000; --panel: #0d0d0d; --panel-2: #191919; --line: #4d4d4d;
+    --text: #ffffff; --muted: #c9c9c9; --accent: #ffd400; --danger: #ff6b5e; --ok: #6fdc8c;
+    --glow: #111111; --on-accent: #000000; --info: #66d9ff;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: radial-gradient(1200px 600px at 50% -10%, var(--glow), var(--bg));
@@ -69,11 +95,15 @@
   .intensity b { font-size: 12px; color: var(--muted); }
   .count { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: auto; }
   .count b { font-size: 22px; min-width: 34px; text-align: center; }
+  .lowmark { font-size: 11px; vertical-align: 3px; margin-right: 2px; }
   .count.low b { color: var(--danger); }
   .card .tools { display: flex; gap: 6px; font-size: 13px; flex-wrap: wrap; justify-content: center; }
   .card .tools button { padding: 4px 9px; white-space: nowrap; }
   dialog { border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--text); padding: 22px; width: min(440px, 92vw); }
   dialog::backdrop { background: rgba(0,0,0,.6); }
+  /* A refused submit must explain itself inside the modal: the toolbar hint is behind the
+     backdrop and outside the focus trap, so the reason went unseen. */
+  dialog .dlg-err { color: var(--danger); font-size: 13px; margin: 10px 0 0; }
   dialog label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
   dialog input, dialog select, dialog textarea { width: 100%; padding: 9px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
   dialog .check { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 13px; color: var(--muted); cursor: pointer; }
@@ -133,6 +163,10 @@
     <option value="auto" data-i18n="theme.auto">Auto</option>
     <option value="dark" data-i18n="theme.dark">Dark</option>
     <option value="light" data-i18n="theme.light">Light</option>
+    <option value="midnight" data-i18n="theme.midnight">Midnight</option>
+    <option value="forest" data-i18n="theme.forest">Forest</option>
+    <option value="blush" data-i18n="theme.blush">Blush</option>
+    <option value="contrast" data-i18n="theme.contrast">High contrast</option>
   </select>
   <select id="lang-select" onchange="setLang(this.value)" data-i18n-title="lang.title"></select>
 </header>
@@ -147,7 +181,7 @@
     <button onclick="pickPhoto()" data-i18n="btn.identify">📷 Identify from photo</button>
     <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
     <button class="ghost" onclick="openMachine()" data-i18n="btn.machine">⚙ Machine</button>
-    <input type="search" id="filter" data-i18n-ph="filter.placeholder" oninput="render()">
+    <input type="search" id="filter" data-i18n-ph="filter.placeholder" data-i18n-title="filter.placeholder" oninput="render()">
     <button class="ghost" id="btn-clean" onclick="logMaintenance('clean')">🧽 Cleaned</button>
     <button class="ghost" id="btn-descaled" onclick="logMaintenance('descale')">🧴 Descaled</button>
     <span class="empty" id="hint"></span>
@@ -238,11 +272,24 @@
   </form>
 </dialog>
 
+<dialog id="token-dialog" aria-labelledby="token-title">
+  <form method="dialog" id="token-form">
+    <h3 id="token-title" data-i18n="auth.title">Dashboard token</h3>
+    <p class="empty" data-i18n="auth.intro"></p>
+    <p class="dlg-err" id="token-err" data-i18n="auth.wrong" hidden></p>
+    <label for="t-token" data-i18n="auth.field">Token</label>
+    <input id="t-token" type="password" autocomplete="current-password">
+    <menu><button value="cancel" class="ghost" formnovalidate data-i18n="action.cancel">Cancel</button><button class="primary" value="save" data-i18n="auth.save">Use token</button></menu>
+  </form>
+</dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 let state = { capsules: [], brews: [], pending: [], maintenance: [], machine: {}, families: [], lines: [] };
 let stats = [];
 let unauthorized = false;  // AUTH_TOKEN deployment: the page stays open but its calls are 401
+const TOKEN_KEY = "apiToken";
+let apiToken = "";  // sent as `Authorization: Bearer`; stays in this browser
 let loadGen = 0;           // only the newest load() may apply its (possibly older) response
 
 const MAINT = { clean: { icon: "🧽" }, descale: { icon: "🧴" } };
@@ -268,19 +315,74 @@ function maintCountdown(m) {
   return { cls: days <= 2 ? "soon" : "ok", text: t("maint.inDays", { days }) };
 }
 
+function reportError(msg) {
+  const dlg = document.querySelector("dialog[open]");
+  if (!dlg) { hint(msg); return; }
+  let el = dlg.querySelector(".dlg-err");
+  if (!el) {
+    el = Object.assign(document.createElement("p"), { className: "dlg-err" });
+    dlg.append(el);
+  }
+  el.textContent = msg;
+}
+
+// a freshly opened dialog starts without the previous attempt's error; the token dialog
+// owns its message (applyStatic fills it), so it is not cleared here
+document.addEventListener("toggle", (e) => {
+  if (e.target.open) {
+    e.target.querySelectorAll(".dlg-err").forEach((el) => {
+      if (el.id !== "token-err") el.textContent = "";
+    });
+  }
+}, true);
+
+// Arriving with the token: `#token=…` (preferred — a fragment never leaves the browser) or
+// `?token=…` is stored, then stripped from the address bar. Read once, at load.
+function tokenFromUrl() {
+  const url = new URL(location.href);
+  const fromHash = new URLSearchParams(url.hash.replace(/^#/, "")).get("token") || "";
+  const fromQuery = url.searchParams.get("token") || "";
+  const given = fromHash || fromQuery;
+  if (!given) return "";
+  url.searchParams.delete("token");
+  url.hash = "";
+  history.replaceState(null, "", url.pathname + url.search + url.hash);
+  return given;
+}
+
+// AUTH_TOKEN is set and the request carried no (or a wrong) token: ask for it instead of
+// leaving the owner with a blank page. Returns false when another modal is already open.
+function askToken() {
+  if (document.querySelector("dialog[open]")) return false;
+  $("t-token").value = "";
+  $("token-err").hidden = !apiToken;  // a sent token was refused vs. none entered yet
+  $("token-dialog").showModal();
+  return true;
+}
+
 async function api(path, method = "GET", body) {
+  const headers = {};
+  if (body) headers["Content-Type"] = "application/json";
+  if (apiToken) headers.Authorization = `Bearer ${apiToken}`;
   const res = await fetch(path, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   let data = {};
   try { data = await res.json(); } catch { data = {}; }  // an empty/HTML error body is still an answer
   if (!res.ok) {
     const err = data.error || `HTTP ${res.status}`;
-    if (res.status === 401) unauthorized = true;  // AUTH_TOKEN set: stop polling, keep it quiet
-    else if (method !== "GET") hint(err);  // a refused write used to vanish silently
+    if (res.status === 401) {
+      unauthorized = true;  // stop polling until the token is supplied
+      if (!askToken() && !$("token-dialog").open) reportError(t("auth.tokenNeeded"));
+    } else if (method !== "GET") reportError(err);
     return { ...data, error: err, status: res.status };
+  }
+  if (unauthorized) {
+    // the token was removed server-side (or is now right): stop claiming the page cannot use it
+    unauthorized = false;
+    if ($("hint").textContent === t("auth.tokenNeeded")) $("hint").textContent = "";
   }
   return data;
 }
@@ -321,16 +423,21 @@ const machineSVG = () => `<svg viewBox="0 0 120 160" width="104" height="140" ar
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 
 // ---------------------------------------------------------------- theme
-// Choice lives in localStorage ("auto" | "dark" | "light"); auto follows the OS via
-// matchMedia. JS resolves it to an explicit data-theme so the CSS stays two flat blocks.
+// Choice lives in localStorage: "auto" or one of the palettes listed in #theme-select.
+// auto follows the OS via matchMedia and resolves to the flat light/dark palette; JS writes
+// an explicit data-theme so the CSS stays one block per palette.
 const prefersLight = matchMedia("(prefers-color-scheme: light)");
 function applyTheme() {
-  const saved = localStorage.getItem("theme") || "auto";
-  document.documentElement.dataset.theme =
-    saved === "auto" ? (prefersLight.matches ? "light" : "dark") : saved;
+  const select = $("theme-select");
+  const known = [...select.options].map((o) => o.value);
+  const saved = localStorage.getItem("theme");
+  select.value = known.includes(saved) ? saved : "auto";  // a removed palette falls back
+  const theme = select.value === "auto" ? (prefersLight.matches ? "light" : "dark") : select.value;
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  // The OS paints the address bar from this meta tag, so take the palette's own --bg.
   document.querySelector('meta[name="theme-color"]').content =
-    document.documentElement.dataset.theme === "light" ? "#f4efe7" : "#14100d";
-  $("theme-select").value = saved;
+    getComputedStyle(root).getPropertyValue("--bg").trim() || "#14100d";
 }
 function setTheme(value) { localStorage.setItem("theme", value); applyTheme(); }
 prefersLight.addEventListener("change", applyTheme);
@@ -361,7 +468,11 @@ async function loadStrings() {
 
 function applyStatic() {
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
-  document.querySelectorAll("[data-i18n-title]").forEach((el) => { el.title = t(el.dataset.i18nTitle); });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    el.title = t(el.dataset.i18nTitle);
+    // an icon-only select/field is announced by its title, otherwise it has no accessible name
+    el.setAttribute("aria-label", el.title);
+  });
   document.querySelectorAll("[data-i18n-ph]").forEach((el) => { el.placeholder = t(el.dataset.i18nPh); });
 }
 
@@ -453,7 +564,7 @@ function render() {
   // How often each capsule was brewed and when last: the whole history is already here.
   const used = new Map();
   for (const b of stats) {
-    if (b.delta < 0 && b.capsule_id != null) {
+    if (b.delta <= 0 && b.capsule_id != null) {
       const u = used.get(b.capsule_id);
       if (u) u.n += 1; else used.set(b.capsule_id, { n: 1, last: b.ts });
     }
@@ -468,7 +579,7 @@ function render() {
   const shown = q ? state.capsules.filter((c) =>
     [c.name, c.family, c.notes].some((f) => (f || "").toLowerCase().includes(q))) : state.capsules;
   $("grid").innerHTML = shown.map((c) => `
-    <div class="card" id="cap-${c.id}" tabindex="0" aria-label="${esc(c.name)}, ${esc(c.count)}" draggable="${q ? "false" : "true"}">
+    <div class="card" id="cap-${c.id}" tabindex="0" aria-label="${esc(c.name)}, ${esc(c.count)}${isLow(c) ? ", " + esc(t("stat.low")) : ""}" draggable="${q ? "false" : "true"}">
       <div class="capsule-art">${capsuleArt(c)}</div>
       <div>
         <div class="name">${esc(c.name)}${c.special ? ` <span title="${esc(t("card.special"))}" style="color: var(--accent)">★</span>` : ""}</div>
@@ -478,7 +589,7 @@ function render() {
       <div class="meta">${intensityBar(c)}${costLabel(c)}</div>
       <div class="count ${isLow(c) ? "low" : ""}">
         <button onclick="change(${c.id},1)" title="${esc(t("card.addOne"))}">+</button>
-        <b>${esc(c.count)}</b>
+        <b>${isLow(c) ? `<span class="lowmark" aria-hidden="true">▼</span>` : ""}${esc(c.count)}</b>
         <button onclick="change(${c.id},-1)" title="${esc(t("card.removeOne"))}">−</button>
       </div>
       <div class="tools">
@@ -500,7 +611,9 @@ function renderStats() {
   const now = new Date();
   const dayStart = (n) => { const d = new Date(now); d.setDate(d.getDate() - n); d.setHours(0, 0, 0, 0); return d; };
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const brews = stats.filter((b) => b.delta < 0);
+  // a brew that was logged against an empty capsule applied no stock change (delta 0), but
+  // it is still a brew: count it in the totals, never the capsule-less upkeep rows
+  const brews = stats.filter((b) => b.delta < 0 || (b.delta === 0 && b.capsule_id != null));
   const priceOf = Object.fromEntries(state.capsules.map((c) => [c.id, c.price || 0]));
 
   const today = brews.filter((b) => dayKey(b.ts) === dayKey(now)).length;
@@ -602,15 +715,15 @@ function renderActivity() {
       <span>${maint ? maint.icon : restock ? "📦" : b.capsule_name ? "☕" : "❓"} ${label} ${restock ? `<b class="ok">+${esc(b.delta)}</b>` : ""}</span>
       <span class="fam">${maint ? esc(t("activity.maintenance")) : esc(b.family || "") + " · " + esc(sourceLabel(b.source))}</span>
       <time>${new Date(b.ts).toLocaleString(lang)}</time>
-      ${b.delta < 0 && b.capsule_id != null ? `<button class="ghost" onclick="openBrewEditor(${b.id})">${esc(t("activity.change"))}</button>` : ""}
-      <button class="ghost" onclick="undoBrew(${b.id})" title="${esc(t("activity.undo"))}">↺</button>
+      ${b.delta <= 0 && !maint && b.capsule_id != null ? `<button class="ghost" onclick="openBrewEditor(${b.id})">${esc(t("activity.change"))}</button>` : ""}
+      ${maint ? "" : `<button class="ghost" onclick="undoBrew(${b.id})" title="${esc(t("activity.undo"))}">↺</button>`}
     </div>`;
   }).join("") || `<p class="empty">${esc(t("activity.empty"))}</p>`;
 }
 
-function hint(msg) {
+function hint(msg, sticky = false) {
   $("hint").textContent = msg;
-  setTimeout(() => { if ($("hint").textContent === msg) $("hint").textContent = ""; }, 4000);
+  if (!sticky) setTimeout(() => { if ($("hint").textContent === msg) $("hint").textContent = ""; }, 4000);
 }
 
 function dismissNew() {
@@ -622,7 +735,9 @@ function dismissNew() {
 
 // ---------------------------------------------------------------- backup
 async function exportBackup() {
-  const blob = new Blob([JSON.stringify(await api("/api/export"), null, 2)], { type: "application/json" });
+  const data = await api("/api/export");
+  if (data.error) { reportError(data.error); return; }  // never download an error object as a backup
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = Object.assign(document.createElement("a"), {
     href: URL.createObjectURL(blob),
     download: `nespresso-backup-${dayKey(new Date())}.json`,
@@ -688,8 +803,11 @@ async function remove(id) {
   if (!confirm(t("confirm.delete"))) return;
   // A capsule with brew history is refused (409): its brews would lose their name and price.
   const res = await fetch(`/api/capsules?id=${id}`, { method: "DELETE" });
-  if (!res.ok) { hint(t("card.deleteBlocked")); return; }
-  await load();
+  if (res.ok) { await load(); return; }
+  let data = {};
+  try { data = await res.json(); } catch { data = {}; }
+  // 409 is the brew-history rule; anything else (locked db, auth) says what it is
+  reportError(res.status === 409 ? t("card.deleteBlocked") : (data.error || `HTTP ${res.status}`));
 }
 
 function openBrewEditor(brewId) {
@@ -711,13 +829,25 @@ $("brew-form").addEventListener("submit", async (e) => {
   await load();
 });
 
+function setFamily(value) {
+  const sel = $("f-family");
+  sel.value = value;
+  if (value && sel.value !== value) {
+    // a family outside this line's list (imported, or from an older catalogue): keep it as an
+    // option, or the select silently blanks and the capsule can never be saved again
+    const opt = Object.assign(document.createElement("option"), { value, textContent: value });
+    sel.append(opt);
+    sel.value = value;
+  }
+}
+
 function openEditorById(id) { openEditor(state.capsules.find((c) => c.id === id)); }
 function openEditor(c) {
   $("editor-title").textContent = t(c ? "dialog.edit" : "dialog.add");
   $("f-id").value = c?.id ?? "";
   $("f-sku").value = c?.sku ?? "";
   $("f-name").value = c?.name ?? "";
-  $("f-family").value = c?.family ?? state.families[0];
+  setFamily(c?.family ?? state.families[0]);
   $("f-image").value = c?.image ?? "";
   $("f-color").value = c?.color || "#6b4f3a";
   $("f-intensity").value = c?.intensity ?? 0;
@@ -740,7 +870,7 @@ $("f-known").addEventListener("change", (e) => {
   if (!k) return;
   $("f-name").value = k.name;
   $("f-sku").value = k.sku || "";  // the catalogue sku travels with the name, so a rename later still matches
-  $("f-family").value = k.family;
+  setFamily(k.family);
   $("f-color").value = k.color || "#6b4f3a";
   $("f-image").value = k.image || "";
   $("f-intensity").value = k.intensity ?? 0;
@@ -750,18 +880,24 @@ $("f-known").addEventListener("change", (e) => {
 $("editor-form").addEventListener("submit", async (e) => {
   if (e.submitter?.value !== "save") return;
   e.preventDefault();
-  const res = await api("/api/capsules", "POST", {
-    id: $("f-id").value || undefined,
-    sku: $("f-sku").value,
-    name: $("f-name").value, family: $("f-family").value,
-    image: $("f-image").value, color: $("f-color").value,
-    count: parseInt($("f-count").value, 10) || 0,
-    price: parseFloat($("f-price").value) || 0,
-    intensity: parseInt($("f-intensity").value, 10) || 0,
-    threshold: parseInt($("f-threshold").value, 10) || 0,
-    special: $("f-special").checked ? 1 : 0,
-    notes: $("f-notes").value,
-  });
+  $("f-save").disabled = true;  // a double tap must not create the capsule twice
+  let res;
+  try {
+    res = await api("/api/capsules", "POST", {
+      id: $("f-id").value || undefined,
+      sku: $("f-sku").value,
+      name: $("f-name").value, family: $("f-family").value,
+      image: $("f-image").value, color: $("f-color").value,
+      count: parseInt($("f-count").value, 10) || 0,
+      price: parseFloat($("f-price").value) || 0,
+      intensity: parseInt($("f-intensity").value, 10) || 0,
+      threshold: parseInt($("f-threshold").value, 10) || 0,
+      special: $("f-special").checked ? 1 : 0,
+      notes: $("f-notes").value,
+    });
+  } finally {
+    $("f-save").disabled = false;
+  }
   if (res.error) return;  // keep what was typed: the server refused it
   $("editor").close();
   await load();
@@ -945,11 +1081,31 @@ function ntfyFieldValue() {
 async function testNotify() {
   // Untouched field = the mask: test the stored topic instead of the mask text.
   const res = await api("/api/notify-test", "POST", { url: ntfyFieldValue() ?? "" });
-  alert(res.error ? `${t("notify.testFailed")} ${res.error}` : t("notify.sent"));
+  alert(res.ok ? t("notify.sent") : t("notify.testFailed"));  // the detail stays server-side
 }
+
+// The token dialog: save it and reload, so every call from the first one carries the header.
+$("token-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (e.submitter?.value !== "save") {
+    $("token-dialog").close();
+    hint(t("auth.tokenNeeded"), true);  // cancelling leaves the empty page explained
+    return;
+  }
+  const token = $("t-token").value.trim();
+  if (!token) return;
+  localStorage.setItem(TOKEN_KEY, token);
+  location.reload();
+});
+$("token-dialog").addEventListener("cancel", () => hint(t("auth.tokenNeeded"), true));
 
 (async function init() {
   applyTheme();
+  // `?token=` wins once, then the browser's stored copy; both go out as a Bearer header.
+  const fromUrl = tokenFromUrl();
+  const stored = localStorage.getItem(TOKEN_KEY) || "";
+  if (fromUrl) localStorage.setItem(TOKEN_KEY, fromUrl);
+  apiToken = fromUrl || stored;
   languages = await api("/api/languages");
   if (!Array.isArray(languages)) languages = [];  // 401 with AUTH_TOKEN: stay on English
   const saved = localStorage.getItem("lang");
@@ -960,7 +1116,7 @@ async function testNotify() {
   buildLangSelect();
   applyStatic();
   await load();
-  if (state.capsules.length && !state.machine.setup_done) openSetup();  // empty = 401, not a fresh shelf
+  if (state.capsules.length && !state.machine.setup_done) openSetup();  // empty = no data, not a fresh shelf
   // A brew posted by the deck or /api/brew-detected never reached an already-open dashboard.
   // Refresh in the background, but never over an open dialog or a 401 (AUTH_TOKEN) page.
   setInterval(refresh, 30000);

@@ -71,15 +71,25 @@ Two of the same-shape settings are about access:
   pointing at your machine). Browsing by IP address (`<lan-ip>:8787`), `localhost`
   and the healthcheck keep working without it. Set it in the `.env` next to the
   compose file.
-- **`TRUST_PROXY`** — off by default. Set it only when a reverse proxy you control sits in
-  front *and* overwrites `X-Forwarded-Host`; the header is client-supplied, so honouring it
-  unconditionally would let a DNS-rebinding page pass the `PUBLIC_HOST` allowlist. A proxy
-  that preserves the original `Host` (Caddy's default) needs neither.
+- **`TRUST_PROXY`** — off by default. Set it to the address(es) of the reverse proxy you
+  control — comma-separated IPs/CIDRs, e.g. `TRUST_PROXY=192.168.70.10` — and only requests
+  arriving *from* those addresses may set `X-Forwarded-Host`. The header is client-supplied,
+  so trusting it from any peer would let a DNS-rebinding page pass the `PUBLIC_HOST`
+  allowlist. A value that names no address (the old `TRUST_PROXY=1`) is ignored with a
+  startup warning. A proxy that preserves the original `Host` (Caddy's default) needs neither.
+  Under Docker, list the proxy's container address (put the proxy on the compose network): a
+  proxy running on the Docker host reaches the app through the bridge gateway, and trusting
+  the gateway also trusts every other client on the host.
 - **`AUTH_TOKEN`** — empty by default (the LAN-trust model, nothing changes). When
-  set, every `/api/*` route requires `Authorization: Bearer <token>` (401 otherwise)
-  — meant for automation that can send headers, and for deployments that leave the
-  LAN. The page itself stays open: it just shows an empty dashboard until an API
-  client is authorised.
+  set, every `/api/*` route requires `Authorization: Bearer <token>` (401 otherwise).
+  The page asks for it once and keeps it in this browser (localStorage, like the
+  theme), so a user who supplies the right token gets the normal dashboard. To hand
+  it over in one go, open `http://<host>:8787/#token=<AUTH_TOKEN>` once — a fragment
+  never reaches the server, and it is stripped from the address bar after it is read.
+  (`?token=<AUTH_TOKEN>` works too, but a reverse proxy may log that query string.)
+  Without a token the page still loads but shows the prompt instead of data;
+  `curl`-style automation sends the header itself. Clearing the site data forgets
+  the token.
 
 The database lives in `./data` (bind-mounted), so it survives rebuilds.
 Delete `data/nespresso.db` to re-seed from `capsules.json` on next start.
@@ -117,8 +127,8 @@ scale, plus the coffee stats and recent activity lists](screenshot.png)
   catalogue (`capsules.json`), with optional price per capsule and a 1–13 intensity
   shown as a scale on each tile.
 - Mark limited editions (★ badge), set your machine name, model, photo, capsule
-  system and sleeve size (the one-tap restock amount), and pick a theme
-  (auto / dark / light).
+  system and sleeve size (the one-tap restock amount), and pick a colour theme
+  (auto / dark / light / midnight / forest / blush / high contrast).
 - **Backup**: export the full database as JSON from the Machine dialog, and restore
   it back (replaces all current data).
 - **Installable (PWA)**: a web app manifest and icons let your browser add the
@@ -383,19 +393,20 @@ and reads its `language` field — drop the file in and it appears.
 | GET | `/api/languages` | — (available UI translations, `[{code, label}]`) |
 | GET | `/api/export` | — (full JSON backup of capsules, brews, settings) |
 | POST | `/api/import` | a `/api/export` backup — replaces all data |
-| POST | `/api/notify-test` | `{url?}` — test push; a client-chosen `url` must be `ntfy.sh` (https) or localhost, anything else tests the saved topic |
+| POST | `/api/notify-test` | `{url?}` — test push; a client-chosen `url` must be `ntfy.sh` (https) or localhost, anything else tests the saved topic (`{ok}` only — the failure detail stays server-side) |
 | POST | `/api/capsules` | `{id?, name, family, color, image, notes, count, price, threshold, intensity, special}` (`special` = limited-edition ★) |
 | DELETE | `/api/capsules?id=N` | — (409 if the capsule has brew history: set its count to 0 instead) |
 | POST | `/api/brew` | `{capsule_id, delta, log?, source?}` (delta `-1` = remove, `+1` = restock; `log:true` also records a brew, `source` defaults to `manual`) |
 | POST | `/api/brew-detected` | `{family?, capsule?, source?}` — `capsule` names the exact pod and wins; `family` alone falls back to the rule below |
 | POST | `/api/brews` | `{brew_id, capsule_id}` — reassign/resolve a brew |
-| DELETE | `/api/brews?id=N` | — (undo a brew/restock and fix the count) |
+| DELETE | `/api/brews?id=N` | — (undo a brew/restock and fix the count; 409 for a maintenance event) |
 | POST | `/api/identify` | `{color, image?}` — `color` is `#rrggbb`, `image` an optional data URL |
 | POST | `/api/resolve` | `{capsule_id, brew_id?}` |
 | POST | `/api/dismiss` | `{brew_id}` |
-| POST | `/api/settings` | `{machine_name?, machine_model?, machine_image?, sleeve_size?, clean_days?, descale_days?, ntfy_url?}` (`ntfy_url` must be an `http(s)` topic URL; empty clears it) |
-| POST | `/api/order` | `{ids}` — capsule ids in the user's drag order |
-| POST | `/api/maintenance` | `{task}` — `clean` or `descale` |
+| POST | `/api/settings` | `{machine_name?, machine_model?, machine_image?, machine_line?, sleeve_size?, clean_days?, descale_days?, ntfy_url?}` (`ntfy_url` must be an `http(s)` topic URL; empty clears it) |
+| POST | `/api/order` | `{ids}` — capsule ids in the user's drag order (the other line's order is kept) |
+| POST | `/api/maintenance` | `{task}` — `clean` or `descale` (a logged upkeep event cannot be undone) |
+| POST | `/api/setup` | `{counts: {capsule_id: count}}` — stock-take: applies the counts and deletes rows left at 0 unless a brew references them; also the re-runnable "count every capsule" action |
 
 Every `POST`/`DELETE` is refused with 403 when the browser reports a foreign
 `Origin` (a web page you merely visit must not be able to `POST /api/import` and
