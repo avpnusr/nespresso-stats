@@ -2465,7 +2465,6 @@ def selftest() -> None:
         global SCANNER_URL
         old_url, SCANNER_URL = SCANNER_URL, "http://127.0.0.1:9/"
         assert refresh_scanner()[0]["name"] == "Vertuo New"
-        SCANNER_URL = old_url
 
         # ... and so does an empty or malformed pull (no stub would silently wipe the banner)
         class _FakeResp:
@@ -2478,6 +2477,9 @@ def selftest() -> None:
             assert [e["name"] for e in refresh_scanner()] == ["Vertuo New", "Original New"]
         finally:
             urllib.request.urlopen = real_urlopen
+            # restore only here: CATALOGUE_URL="" (an offline install) would otherwise
+            # make every fetch below return [] and fail this gate
+            SCANNER_URL = old_url
 
         # price watch: the store's current price reaches /api/state on a sku match of the
         # machine's line — but only when it moved away from the price the owner paid
