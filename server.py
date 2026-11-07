@@ -1164,6 +1164,10 @@ def current_state(conn) -> dict:
         sku = (e.get("sku") or "").strip()
         if not sku or entry_line(e) != line:
             continue
+        if e.get("available") is False:
+            # the scanner marks a row it could not confirm unavailable and keeps its last price;
+            # that stale price must not become a "the store now charges X" badge
+            continue
         try:
             p = float(e.get("price"))
         except (TypeError, ValueError):
@@ -2276,6 +2280,16 @@ def selftest() -> None:
         by_name = {c["name"]: c for c in current_state(conn)["capsules"]}
         assert by_name["Melozio"]["store_price"] == 3.99, by_name["Melozio"]
         conn.execute("UPDATE capsules SET price = 3.99 WHERE name = 'Melozio'")
+        conn.commit()
+        by_name = {c["name"]: c for c in current_state(conn)["capsules"]}
+        assert "store_price" not in by_name["Melozio"], by_name["Melozio"]
+        # a row the scanner could not confirm (it keeps the last price, marked unavailable) has
+        # no trustworthy price: a stale quote must not become a "the store now charges X" badge
+        _scanner_entries[:] = [
+            {"name": "Melozio", "sku": "7005.20", "line": "vertuo", "family": "Mug",
+             "price": "3.99", "available": False},
+        ]
+        conn.execute("UPDATE capsules SET price = 0.5 WHERE name = 'Melozio'")
         conn.commit()
         by_name = {c["name"]: c for c in current_state(conn)["capsules"]}
         assert "store_price" not in by_name["Melozio"], by_name["Melozio"]
